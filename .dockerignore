@@ -1,0 +1,18 @@
+# Found during the audit: there was no .dockerignore at all, so
+# `COPY . .` in the Dockerfile would have pulled in the local .venv
+# (wrong platform/Python build), .git history, __pycache__, and any
+# local dev SQLite database (data/*.db) straight into the image layer
+# — the last one is a real data-leak risk if a dev's local trade
+# journal ever got baked into a shared image.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.gitignore
+data/*.db
+data/exports/*
+data/models/*
+!data/exports/.gitkeep
+!data/models/.gitkeep
+.env
