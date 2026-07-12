@@ -102,6 +102,17 @@ Intelligent Trading Assistant (Sprint 8 — Vision Phases 5 & 7):
 |---|---|---|
 | POST | `/api/v1/assistant/pretrade-analysis` | Pre-trade quality score, win probability, risk level, expected RR, Strong Buy/Buy/Wait/Avoid recommendation, plus a plain-language explanation (strengths/weaknesses/historical reasons). Works before any model is trained — falls back to a rule-score-only estimate. |
 
+Chart Analysis Engine (Sprint 10):
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/chart/analyze-candles` | Level 1 — deterministic SMC read from real OHLC candle data |
+| POST | `/api/v1/chart/analyze-image` | Level 1 — best-effort SMC read from a chart screenshot (vision AI; placeholder data until `ANTHROPIC_API_KEY` is set) |
+| POST | `/api/v1/chart/validate` | Level 2 — validate a Level-1 analysis against SMC trading rules (trend, POI, confirmation, min 1:2 R:R) |
+| POST | `/api/v1/chart/coach` | Level 3 — plain-language explanation + 7-component confidence breakdown |
+| POST | `/api/v1/chart/full-analysis/candles` | Levels 1+2+3 in one call, from candle data |
+| POST | `/api/v1/chart/full-analysis/image` | Levels 1+2+3 in one call, from a screenshot |
+
 ML dataset (Sprint 7 prep):
 
 | Method | Path | Purpose |
@@ -380,6 +391,84 @@ user_id)`, and the old `invalidate()` did an exact-match `dict.pop` on
 the bare `user_id`, which never matched. `/coach/insights` and
 `/coach/deep-dive` could serve up to 60 seconds of stale, pre-trade-write
 data. Fixed in `app/services/cache.py`; see `CHANGELOG.md` for detail.
+
+## Chart Analysis Engine (Sprint 10)
+
+An independent module that reads a chart (either real OHLC candle data
+or a screenshot) and produces a three-level Smart Money Concepts (SMC)
+analysis: what the chart shows, whether it's a valid trade by your
+rules, and a plain-language explanation of why. See
+`app/chart/__init__.py` for the full architecture rationale.
+
+### Two ways to "read" the chart
+
+- **Real price data (`analyze-candles` / `full-analysis/candles`)** —
+  paste OHLC candles (open/high/low/close per bar); `app/chart/candle_smc_engine.py`
+  computes trend, swing highs/lows, BOS/CHOCH, order blocks, fair value
+  gaps (with mitigation tracking), equal-highs/equal-lows liquidity,
+  and premium/discount **deterministically from real numbers** — the
+  same input always produces the same output, and it's provably
+  correct rather than estimated.
+- **Screenshot (`analyze-image` / `full-analysis/image`)** — upload a
+  chart image; a vision-capable AI model estimates the same fields.
+  This is inherently best-effort (an AI reading pixels, not doing math
+  on real prices) and ships **disabled by default**: with no vision API
+  key configured, every screenshot analysis returns clearly-labeled
+  placeholder data (`isPlaceholder: true` in the response) so nothing
+  is ever silently mistaken for a real read. Set `ANTHROPIC_API_KEY`
+  (e.g. as a Render environment variable) to switch on real Claude
+  vision analysis — no other configuration or code change needed.
+
+### Level 2 — trade validation
+
+`POST /api/v1/chart/validate` (or the combined `full-analysis/*`
+endpoints) checks a Level-1 analysis against SMC trading rules: H4
+trend alignment, price at a valid Point of Interest, a lower-timeframe
+confirmation (BOS/CHOCH/explicit flag), and a minimum 1:2 Risk:Reward.
+Trades failing any rule come back `INVALID` with itemized reasons;
+candle-sourced analyses also get a suggested entry/stop-loss/take-profit
+(screenshot-sourced analyses don't — a picture alone can't give exact
+price levels, and the API says so rather than guessing numbers).
+
+### Level 3 — AI coach
+
+`POST /api/v1/chart/coach` never just says "Buy" or "Sell" — it
+returns a list of plain-language sentences explaining the trend, the
+POI, liquidity, the latest structural event, R:R, and any conflicts,
+plus a 7-component confidence breakdown (trend alignment, POI quality,
+liquidity quality, BOS quality, CHOCH quality, FVG quality, R:R
+quality) rolled up into one overall 0-100 score.
+
+### Example
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/chart/full-analysis/candles \
+  -H "Content-Type: application/json" \
+  -d '{
+        "candles": [
+          {"time":"2026-01-01T00:00","open":1.0950,"high":1.0965,"low":1.0945,"close":1.0960},
+          {"time":"2026-01-01T01:00","open":1.0960,"high":1.0980,"low":1.0958,"close":1.0975}
+        ],
+        "plannedRR": 3.0
+      }'
+```
+
+At least 10 candles are required for a meaningful read
+(`MIN_CANDLES_FOR_ANALYSIS` in `app/chart/candle_smc_engine.py`) —
+fewer than that returns a 422 rather than a low-confidence guess.
+
+### Future expansion (per the original spec's roadmap)
+
+The normalize-into-one-canonical-shape design (`app/chart/normalize.py`)
+means MT5 live connection, TradingView integration, and multi-timeframe
+analysis can each be added as one more Level-1 producer without
+touching Level 2/3; an automatic news filter, economic calendar, and
+session detection are additive checks layered into Level 2; trade
+journaling and AI review-after-close are a persistence layer added to
+`app/services/chart_service.py` (stateless today by design); and a
+future ML confidence model is one more consumer of `ChartAnalysis`,
+same as `app/ml/` already is for trade scoring — none of these require
+restructuring what's here now.
 
 ## Production readiness notes (post-Sprint-7 audit)
 

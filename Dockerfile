@@ -25,6 +25,13 @@ USER tradeedge
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')" || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://localhost:' + os.environ.get('PORT','8000') + '/healthz')" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Sprint 9 — hosting platforms like Render assign a dynamic port via
+# the $PORT environment variable rather than always using 8000; the
+# app must bind to whatever $PORT actually is, falling back to 8000 for
+# plain `docker run` / local use where $PORT isn't set. This has to be
+# shell form (not the JSON-array exec form) so $PORT actually expands —
+# exec-form CMD does not invoke a shell and would pass the literal
+# string "$PORT" to uvicorn.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

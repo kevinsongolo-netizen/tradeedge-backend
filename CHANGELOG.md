@@ -6,6 +6,71 @@ full Python/FastAPI backend; the entries below are grouped by area
 rather than by individual commit, since Sprint 6 shipped as one
 coherent body of work.
 
+## [10.0.0] — Sprint 10: Chart Analysis Engine
+
+A new, independent module for Smart Money Concepts (SMC) chart
+analysis, built with two Level-1 "reading" paths that both feed the
+same Level 2/3 logic — see `app/chart/__init__.py` for the full
+architecture rationale.
+
+### Added
+
+- `app/chart/candle_smc_engine.py` — deterministic SMC detection from
+  real OHLC candle data: fractal swing highs/lows, trend inference,
+  BOS/CHOCH structural-break detection, order blocks, fair value gaps
+  (with mitigation tracking), equal-highs/equal-lows liquidity, and a
+  premium/discount read. Pure functions, no I/O, unit-tested against
+  hand-constructed candle series with known ground truth.
+- `app/chart/vision_provider.py` — pluggable vision AI interface for
+  reading a chart *screenshot*. Ships with `PlaceholderVisionProvider`
+  (clearly-labeled mock output, active whenever no vision API key is
+  configured) and `AnthropicVisionProvider` (real Claude vision
+  analysis, activated automatically the moment `ANTHROPIC_API_KEY` is
+  set — no other code changes needed). `get_vision_provider()` is the
+  single factory/switch point.
+- `app/chart/normalize.py` — adapts either Level-1 path's raw output
+  into one canonical `ChartAnalysis` shape, so Level 2/3 never need to
+  know which path produced their input.
+- `app/chart/trade_validator.py` (Level 2) — validates a `ChartAnalysis`
+  against SMC trading rules (H4 trend alignment, valid Point of
+  Interest, lower-timeframe confirmation, minimum 1:2 Risk:Reward) and
+  returns VALID/INVALID with itemized pass/fail reasons plus a
+  suggested entry/stop-loss/take-profit when the analysis came from
+  real candle data.
+- `app/chart/coach_explainer.py` (Level 3) — turns the Level 1 + 2
+  result into a plain-language explanation (never just "Buy"/"Sell" —
+  always the reasoning) and a 7-component confidence breakdown (trend
+  alignment, POI/liquidity/BOS/CHOCH/FVG quality, R:R quality) rolled
+  up into an overall 0-100 score.
+- `app/schemas/chart.py` and `app/api/v1/chart.py` — `/api/v1/chart/*`
+  endpoints: `analyze-candles`, `analyze-image`, `validate`, `coach`,
+  and combined `full-analysis/candles` / `full-analysis/image` for the
+  common one-round-trip case.
+- `app/services/chart_service.py` — orchestrates the above; no
+  database dependency in this first cut (chart analyses are stateless
+  by design — persistence for trade journaling / AI review-after-close
+  is a tracked future addition, not a refactor).
+- `anthropic` (soft dependency — only imported when a vision API key is
+  configured) and `python-multipart` (required by FastAPI's
+  `UploadFile`/`Form` for the image-upload endpoints) added to
+  `requirements.txt`.
+- 34 new tests across `tests/chart/` (candle engine, trade validator,
+  coach explainer, vision provider factory/placeholder/error-wrapping)
+  and `tests/api/test_chart.py` (all six endpoints, including the
+  "no API key configured" placeholder path and input-validation
+  rejections).
+
+### Design notes for future expansion (see spec's "Future Expansion" list)
+
+The two-Level-1-paths-into-one-canonical-shape architecture means MT5
+live feed, TradingView integration, multi-timeframe analysis, and a
+future ML confidence model can each be added as one more producer of
+`ChartAnalysis` (or one more consumer of it, for a trained model) —
+Level 2 and Level 3 do not change. Session detection, an economic-
+calendar/news filter, position sizing, and trade journaling on top of
+a chart analysis are all additive services layered on top of this
+module, not changes to it.
+
 ## [8.0.0] — Sprint 8: Intelligent Trading Assistant, Coach, Explainable AI
 
 Builds Vision Phases 5-7 on the existing Sprint 6/7 stack. Pure backend

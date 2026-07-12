@@ -1,3 +1,11 @@
+# Render "Blueprint" config (Sprint 9) — lets Render auto-configure
+# this service from this one file instead of manually filling in every
+# field in the dashboard. In Render: New + -> Blueprint -> pick this
+# repo -> Render reads this file automatically.
+#
+# Values marked `sync: false` are secrets/environment-specific and are
+# intentionally NOT committed here — Render will prompt for them once,
+# in its dashboard, the first time you deploy.
 services:
   - type: web
     name: tradeedge-backend
@@ -8,9 +16,9 @@ services:
       - key: APP_ENV
         value: prod
       - key: DATABASE_URL
-        sync: false
+        sync: false  # paste your Supabase Postgres connection string here (see README)
       - key: SECRET_KEY
-        generateValue: true
+        generateValue: true  # Render generates a random one for you
       - key: CORS_ORIGINS
         value: '["https://tradeedge3.netlify.app"]'
       - key: CORS_ALLOW_CREDENTIALS
@@ -21,3 +29,9 @@ services:
         value: /app/data/models
       - key: LOG_LEVEL
         value: INFO
+      - key: ANTHROPIC_API_KEY
+        sync: false  # optional -- only needed for the Chart Analysis Engine's
+                     # real screenshot/vision reading (Sprint 10). Leave unset
+                     # to use the built-in placeholder vision provider; add a
+                     # real Anthropic API key here later to switch it on with
+                     # zero code changes.

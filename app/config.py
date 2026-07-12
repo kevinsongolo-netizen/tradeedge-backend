@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # --- Sprint 7: trained model artifacts (joblib) ---
     models_dir: str = "./data/models"
 
+    # --- Sprint 10: Chart Analysis Engine — vision AI (optional) ---
+    # When unset, the chart screenshot-reading path automatically falls
+    # back to PlaceholderVisionProvider (app/chart/vision_provider.py).
+    # Set this (e.g. as a Render env var) to switch on real Claude
+    # vision analysis with zero code changes.
+    anthropic_api_key: str | None = None
+
     @property
     def is_dev(self) -> bool:
         return self.app_env.lower() == "dev"
