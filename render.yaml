@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: tradeedge-backend
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: prod
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: '["https://tradeedge3.netlify.app"]'
+      - key: CORS_ALLOW_CREDENTIALS
+        value: "false"
+      - key: EXPORT_DIR
+        value: /app/data/exports
+      - key: MODELS_DIR
+        value: /app/data/models
+      - key: LOG_LEVEL
+        value: INFO
