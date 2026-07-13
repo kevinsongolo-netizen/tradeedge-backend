@@ -117,6 +117,17 @@ class CoachExplanationResult(CamelModel):
     recommendation: str  # "BUY" | "SELL" | "WAIT"
 
 
+class MultiTimeframeConfirmation(CamelModel):
+    """Sprint 12 — auto-derived M15 confirmation from real M15 candle
+    data, in place of the manual has-m15-bos/choch/entry checkboxes."""
+
+    aligned: bool
+    has_m15_bos: bool
+    has_m15_choch: bool
+    has_m15_entry_confirmation: bool
+    notes: list[str] = Field(default_factory=list)
+
+
 class FullChartAnalysisResponse(CamelModel):
     """The combined Level 1 + 2 + 3 result — what the UI calls in one
     round trip for the common case."""
@@ -125,6 +136,7 @@ class FullChartAnalysisResponse(CamelModel):
     validation: TradeValidationResult
     coach: CoachExplanationResult
     meta: ImageAnalyzeMeta | None = None
+    multi_timeframe: MultiTimeframeConfirmation | None = None
 
 
 class FullCandlesAnalysisRequest(CamelModel):
@@ -133,6 +145,15 @@ class FullCandlesAnalysisRequest(CamelModel):
     price data" case."""
 
     candles: list[CandleIn] = Field(min_length=1)
+    m15_candles: list[CandleIn] | None = Field(
+        default=None,
+        description=(
+            "Sprint 12 — optional M15 candles for automatic multi-timeframe "
+            "confirmation. When supplied, has_m15_bos/has_m15_choch/"
+            "has_m15_entry_confirmation are derived from real M15 structure "
+            "and OR'd with the manual flags below rather than replacing them."
+        ),
+    )
     direction: str | None = None
     planned_rr: float | None = None
     has_m15_bos: bool = False

@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     # vision analysis with zero code changes.
     anthropic_api_key: str | None = None
 
+    # --- Sprint 12: Market Context Filters — news/economic calendar (optional) ---
+    # When unset, the news filter automatically falls back to
+    # PlaceholderCalendarProvider (app/news/calendar_provider.py). Set
+    # this (e.g. as a Render env var) to switch on real economic
+    # calendar data via Finnhub's free tier with zero code changes.
+    # Get a free key at https://finnhub.io/register.
+    finnhub_api_key: str | None = None
+
     @property
     def is_dev(self) -> bool:
         return self.app_env.lower() == "dev"

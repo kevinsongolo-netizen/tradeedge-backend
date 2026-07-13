@@ -6,6 +6,62 @@ full Python/FastAPI backend; the entries below are grouped by area
 rather than by individual commit, since Sprint 6 shipped as one
 coherent body of work.
 
+## [12.0.0] — Sprint 12: Market Context Filters
+
+Second slice of the Sprint 10 "future expansion" roadmap: trading
+session auto-detection, multi-timeframe confirmation, and a real
+news/economic calendar filter (pluggable, same pattern as the vision
+provider).
+
+### Added
+
+- `app/engines/session_engine.py` — pure trading-session detector
+  (`detect_session()`). Given a UTC timestamp (defaults to now),
+  returns the active session(s) (Asian/London/New York), whether it's
+  the London/NY overlap, and a single "primary session" label.
+- `POST /api/v1/tools/session-detect` — new endpoint on the Sprint 11
+  `tools` router.
+- `app/chart/multi_timeframe.py` — `confirm_with_m15()` derives the
+  M15 confirmation flags (`hasM15Bos`/`hasM15Choch`/
+  `hasM15EntryConfirmation`) Level 2 trade validation already accepts
+  from a *real* M15 `ChartAnalysis`, instead of requiring the user to
+  self-report them via checkboxes. `POST /api/v1/chart/full-analysis/
+  candles` now accepts an optional `m15Candles` field — when supplied,
+  the derived flags are OR'd with any manually-checked ones (manual
+  checkboxes remain a valid fallback) and a `multiTimeframe` block is
+  returned alongside `analysis`/`validation`/`coach`.
+- `app/news/` (new package) — pluggable economic-calendar provider,
+  mirroring `app/chart/vision_provider.py`'s design exactly:
+  `PlaceholderCalendarProvider` (clearly-labeled example events, active
+  by default) and `FinnhubCalendarProvider` (real data via Finnhub's
+  free tier, activated the moment `FINNHUB_API_KEY` is set — zero other
+  code changes). `app/news/news_filter_engine.py` is a pure function
+  that checks a list of events against a planned trade time/buffer/
+  currency filter and flags high-impact news nearby.
+- `POST /api/v1/news/check-calendar` — new stateless `news` router.
+- Frontend: an M15 candle textarea in the Chart Analysis Engine's
+  candle-data mode (optional) with a new "Multi-Timeframe Confirmation"
+  results panel, and a new "Session & News Check" card in AI Insights
+  (session auto-detect button + a planned-trade-time news check form).
+
+### Tests
+
+- `tests/engines/test_session_engine.py` (7 tests), `tests/api/
+  test_tools_session.py` (2 tests), `tests/chart/test_multi_timeframe.py`
+  (6 tests), `tests/api/test_chart_multi_timeframe.py` (2 tests),
+  `tests/news/test_news_filter_engine.py` (8 tests), `tests/news/
+  test_calendar_provider.py` (5 tests, network mocked — no real Finnhub
+  calls in CI), `tests/api/test_news.py` (2 tests). 32 new tests total.
+
+### Note on Finnhub's economic calendar API
+
+`FinnhubCalendarProvider`'s parsing is defensive (every field read
+with a fallback) and wraps any unexpected response shape as a clear
+`CalendarProviderError` rather than surfacing wrong data, since
+Finnhub's exact free-tier response fields weren't independently
+verifiable at the time this was written. Worth a quick sanity check
+against a real response the first time a key is added.
+
 ## [11.0.0] — Sprint 11: Trade Management Tools
 
 First slice of the "future expansion" roadmap flagged in Sprint 10:

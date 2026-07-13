@@ -35,3 +35,9 @@ services:
                      # to use the built-in placeholder vision provider; add a
                      # real Anthropic API key here later to switch it on with
                      # zero code changes.
+      - key: FINNHUB_API_KEY
+        sync: false  # optional -- only needed for the real economic-calendar
+                     # news filter (Sprint 12). Leave unset to use the
+                     # built-in placeholder calendar provider; add a free
+                     # Finnhub API key here later to switch it on with zero
+                     # code changes (register at https://finnhub.io/register).

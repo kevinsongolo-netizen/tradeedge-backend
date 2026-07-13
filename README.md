@@ -491,6 +491,26 @@ auto-detection, news/economic calendar), a backtesting engine, live
 MT5/TradingView data connections, and an ML confidence model are
 scoped but intentionally not started — see the project roadmap.
 
+## Market Context Filters (Sprint 12)
+
+Second slice of the Chart Analysis Engine's "future expansion"
+roadmap. All three endpoints are stateless:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/tools/session-detect` | Trading session auto-detection (Asian/London/New York/Overlap) from a UTC timestamp. |
+| `POST /api/v1/chart/full-analysis/candles` (extended) | Now accepts optional `m15Candles` — auto-derives M15 BOS/CHOCH/entry-confirmation from real M15 structure instead of manual checkboxes, returned as a `multiTimeframe` block. |
+| `POST /api/v1/news/check-calendar` | Checks for high-impact economic news near a planned trade time. Uses `PlaceholderCalendarProvider` (clearly-labeled example events) until `FINNHUB_API_KEY` is set, then switches to real Finnhub data with zero code changes — get a free key at https://finnhub.io/register. |
+
+Frontend: an optional M15 candle textarea + "Multi-Timeframe
+Confirmation" panel in the Chart Analysis Engine card, and a new
+"Session & News Check" card in AI Insights.
+
+### Future expansion (not yet built)
+
+Backtesting, live MT5/TradingView data connections, and an ML
+confidence model are scoped but intentionally not started.
+
 ## Production readiness notes (post-Sprint-7 audit)
 
 A full production-readiness audit was done after Sprint 7 shipped.

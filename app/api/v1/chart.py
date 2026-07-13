@@ -28,6 +28,7 @@ from app.schemas.chart import (
     CoachRequest,
     FullCandlesAnalysisRequest,
     FullChartAnalysisResponse,
+    MultiTimeframeConfirmation,
     TradeValidationRequest,
     TradeValidationResult,
 )
@@ -106,6 +107,9 @@ async def coach(body: CoachRequest) -> CoachExplanationResult:
 async def full_analysis_candles(body: FullCandlesAnalysisRequest) -> FullChartAnalysisResponse:
     service = ChartService()
     candles = [c.model_dump(by_alias=False) for c in body.candles]
+    m15_candles = (
+        [c.model_dump(by_alias=False) for c in body.m15_candles] if body.m15_candles else None
+    )
     result = await service.full_analysis_from_candles(
         candles,
         direction=body.direction,
@@ -115,12 +119,15 @@ async def full_analysis_candles(body: FullCandlesAnalysisRequest) -> FullChartAn
         has_m15_entry_confirmation=body.has_m15_entry_confirmation,
         has_liquidity_sweep=body.has_liquidity_sweep,
         min_rr=body.min_rr,
+        m15_candles=m15_candles,
     )
+    multi_timeframe = result.get("multi_timeframe")
     return FullChartAnalysisResponse(
         analysis=ChartAnalysis(**result["analysis"]),
         validation=TradeValidationResult(**result["validation"]),
         coach=CoachExplanationResult(**result["coach"]),
         meta=result["meta"],
+        multi_timeframe=MultiTimeframeConfirmation(**multi_timeframe) if multi_timeframe else None,
     )
 
 

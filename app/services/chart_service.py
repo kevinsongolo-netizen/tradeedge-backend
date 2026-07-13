@@ -15,7 +15,8 @@ from typing import Any
 from app.chart import normalize
 from app.chart.candle_smc_engine import analyze_candles
 from app.chart.coach_explainer import explain
-from app.chart.trade_validator import validate_trade
+from app.chart.multi_timeframe import confirm_with_m15
+from app.chart.trade_validator import _direction_from_bias, validate_trade
 from app.chart.vision_provider import VisionProviderError, get_vision_provider
 from app.errors import ValidationError
 from app.schemas.chart import ChartAnalysis
@@ -48,22 +49,42 @@ class ChartService:
     async def full_analysis_from_candles(
         self, candles: list[dict], *, direction: str | None, planned_rr: float | None,
         has_m15_bos: bool, has_m15_choch: bool, has_m15_entry_confirmation: bool,
-        has_liquidity_sweep: bool, min_rr: float,
+        has_liquidity_sweep: bool, min_rr: float, m15_candles: list[dict] | None = None,
     ) -> dict[str, Any]:
         analysis_dict = await self.analyze_candles(candles)
         analysis = ChartAnalysis(**analysis_dict)
+
+        multi_timeframe: dict[str, Any] | None = None
+        effective_m15_bos = has_m15_bos
+        effective_m15_choch = has_m15_choch
+        effective_m15_entry = has_m15_entry_confirmation
+        if m15_candles:
+            m15_analysis_dict = await self.analyze_candles(m15_candles)
+            m15_analysis = ChartAnalysis(**m15_analysis_dict)
+            resolved_direction = direction or _direction_from_bias(analysis.bias) or "buy"
+            multi_timeframe = confirm_with_m15(m15_analysis, resolved_direction)
+            effective_m15_bos = effective_m15_bos or multi_timeframe["has_m15_bos"]
+            effective_m15_choch = effective_m15_choch or multi_timeframe["has_m15_choch"]
+            effective_m15_entry = effective_m15_entry or multi_timeframe["has_m15_entry_confirmation"]
+
         validation = self.validate(
             analysis,
             direction=direction,
             planned_rr=planned_rr,
-            has_m15_bos=has_m15_bos,
-            has_m15_choch=has_m15_choch,
-            has_m15_entry_confirmation=has_m15_entry_confirmation,
+            has_m15_bos=effective_m15_bos,
+            has_m15_choch=effective_m15_choch,
+            has_m15_entry_confirmation=effective_m15_entry,
             has_liquidity_sweep=has_liquidity_sweep,
             min_rr=min_rr,
         )
         coach_result = self.coach(analysis, validation, min_rr)
-        return {"analysis": analysis_dict, "validation": validation, "coach": coach_result, "meta": None}
+        return {
+            "analysis": analysis_dict,
+            "validation": validation,
+            "coach": coach_result,
+            "meta": None,
+            "multi_timeframe": multi_timeframe,
+        }
 
     async def full_analysis_from_image(
         self, image_bytes: bytes, mime_type: str, *, direction: str | None, planned_rr: float | None,
