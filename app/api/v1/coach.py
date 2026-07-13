@@ -7,8 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
 from app.deps import get_current_user_id
-from app.schemas.coach import CoachDeepDive, CoachInsightsResponse
+from app.schemas.coach import (
+    CoachDeepDive,
+    CoachInsightsResponse,
+    TradeReviewRequest,
+    TradeReviewResult,
+)
 from app.services.coach_service import CoachService
+from app.services.trade_review_service import TradeReviewService
 
 router = APIRouter(prefix="/coach", tags=["coach"])
 
@@ -40,3 +46,20 @@ async def coach_deep_dive(
     service = CoachService(session)
     result = await service.deep_dive(user_id)
     return CoachDeepDive(**result)
+
+
+@router.post(
+    "/review-trade",
+    response_model=TradeReviewResult,
+    summary="Sprint 11 — AI review-after-close for a single closed trade",
+)
+async def review_trade(body: TradeReviewRequest) -> TradeReviewResult:
+    """Stateless — takes the whole trade in the request body (same
+    fields the journal already collects), so it works whether or not
+    the trade has been synced to the backend yet. Never just labels a
+    trade win/loss: explains what worked, what went wrong, and the one
+    lesson worth remembering, from the rules-followed/tags/exit-reason/
+    R:R fields already captured when the trade was logged."""
+    service = TradeReviewService()
+    result = service.review(body.to_candidate_dict())
+    return TradeReviewResult(**result)

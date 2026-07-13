@@ -6,7 +6,7 @@ live outside the ``/api/v1`` prefix and are mounted directly in
 """
 from fastapi import APIRouter
 
-from app.api.v1 import ai, assistant, chart, coach, ml, ml_train, similar, stats, trades
+from app.api.v1 import ai, assistant, chart, coach, ml, ml_train, similar, stats, tools, trades
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(trades.router)
@@ -18,3 +18,4 @@ api_router.include_router(ml.router)
 api_router.include_router(ml_train.router)  # Sprint 7 — /ml/train, /ml/models*, /ml/predict, /ml/dataset/validation-report
 api_router.include_router(assistant.router)  # Sprint 8 — /assistant/pretrade-analysis
 api_router.include_router(chart.router)  # Sprint 10 — Chart Analysis Engine (/chart/*)
+api_router.include_router(tools.router)  # Sprint 11 — /tools/position-size

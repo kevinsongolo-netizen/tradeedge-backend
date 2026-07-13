@@ -6,6 +6,53 @@ full Python/FastAPI backend; the entries below are grouped by area
 rather than by individual commit, since Sprint 6 shipped as one
 coherent body of work.
 
+## [11.0.0] — Sprint 11: Trade Management Tools
+
+First slice of the "future expansion" roadmap flagged in Sprint 10:
+position sizing, one-click journaling straight from a Chart Analysis
+result, and AI review-after-close. All three are stateless additions
+that reuse existing engines/schemas rather than touching Chart
+Analysis Engine internals — proof the Sprint 10 architecture supports
+exactly the kind of additive growth it was designed for.
+
+### Added
+
+- `app/engines/position_size_engine.py` — pure, deterministic
+  risk-based position size calculator (`calculate_position_size()`).
+  Works for any instrument (forex, indices, metals, crypto) via a
+  broker-agnostic `value_per_point_per_lot` input rather than assuming
+  a fixed contract size. Computes recommended lots (rounded down to
+  the lot step so risk is never exceeded), actual risk amount,
+  potential profit/R:R when a take-profit is supplied, and warns on
+  a >3% single-trade risk or a stop distance too tight for the
+  supplied risk/lot-step combination.
+- `app/engines/trade_review_engine.py` — pure "AI review-after-close"
+  engine (`build_trade_review()`). Takes one closed trade (the same
+  shape the journal already collects) and returns a structured,
+  plain-language review — outcome, what worked, what went wrong, and
+  one specific lesson — built entirely from fields already captured
+  when the trade was logged (rules-followed, worked/failed tags, exit
+  reason, R:R, H4 trend/POI). Never just labels a trade win/loss.
+- `POST /api/v1/tools/position-size` — new stateless `tools` router.
+- `POST /api/v1/coach/review-trade` — added to the existing coach
+  router. Accepts a whole trade in the body (synced or not), so it
+  works immediately without requiring the trade to already exist in
+  the database.
+- Frontend: a "Position Size Calculator" card in AI Insights (with a
+  "Use these levels" shortcut that pulls suggested entry/SL/TP
+  straight from a Chart Analysis result), a "Save this trade to
+  journal" button on Chart Analysis results that pre-fills the
+  existing Log Trade modal, and a "Get AI Review" button inside that
+  same modal once an exit price is entered.
+
+### Tests
+
+- `tests/engines/test_position_size_engine.py` (18 tests) and
+  `tests/engines/test_trade_review_engine.py` (7 tests) — pure-engine
+  unit tests.
+- `tests/api/test_tools.py` and `tests/api/test_coach_review_trade.py`
+  — endpoint-level tests, including validation-error paths.
+
 ## [10.0.0] — Sprint 10: Chart Analysis Engine
 
 A new, independent module for Smart Money Concepts (SMC) chart

@@ -470,6 +470,27 @@ future ML confidence model is one more consumer of `ChartAnalysis`,
 same as `app/ml/` already is for trade scoring — none of these require
 restructuring what's here now.
 
+## Trade Management Tools (Sprint 11)
+
+First slice of the Chart Analysis Engine's "future expansion" roadmap.
+Both endpoints are stateless (no DB/auth dependency):
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/tools/position-size` | Risk-based lot size calculator — works for any instrument via a broker-agnostic "value per point per lot" input. |
+| `POST /api/v1/coach/review-trade` | AI review-after-close — takes one closed trade and returns what worked, what went wrong, and one lesson, built from fields the journal already collects. |
+
+Frontend: a Position Size Calculator card in AI Insights, a "Save this
+trade to journal" button on Chart Analysis results, and a "Get AI
+Review" button in the Log Trade modal once an exit price is set.
+
+### Future expansion (not yet built)
+
+Market context filters (multi-timeframe confirmation, session
+auto-detection, news/economic calendar), a backtesting engine, live
+MT5/TradingView data connections, and an ML confidence model are
+scoped but intentionally not started — see the project roadmap.
+
 ## Production readiness notes (post-Sprint-7 audit)
 
 A full production-readiness audit was done after Sprint 7 shipped.

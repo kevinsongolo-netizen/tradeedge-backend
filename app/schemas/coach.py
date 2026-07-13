@@ -2,7 +2,10 @@
 since Sprint 8, ``GET /api/v1/coach/deep-dive`` (Vision Phase 6)."""
 from __future__ import annotations
 
+from pydantic import Field
+
 from app.schemas.common import CamelModel
+from app.schemas.trade import TradeBase
 
 
 class CoachInsight(CamelModel):
@@ -54,3 +57,21 @@ class CoachDeepDive(CamelModel):
     pair_to_stop_trading: DimensionStat | None = None
     sample_size: int
     version: str
+
+
+class TradeReviewRequest(TradeBase):
+    """Request body for ``POST /coach/review-trade`` (Sprint 11 — AI
+    review-after-close). Accepts the same fields as the journal (pair,
+    direction, entry, exit, sl, tp, rr, h4Trend, h4PoiType, rulesFollowed,
+    workedTags, failedTags, exitReason, notes, ...). Works on any closed
+    trade whether or not it's been synced to the backend yet — the whole
+    trade is supplied in the request body."""
+
+
+class TradeReviewResult(CamelModel):
+    outcome: str  # "WIN" | "LOSS" | "BREAKEVEN" | "UNKNOWN"
+    headline: str
+    what_worked: list[str] = Field(default_factory=list)
+    what_went_wrong: list[str] = Field(default_factory=list)
+    lesson: str
+    followed_plan_note: str
