@@ -34,4 +34,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
 # shell form (not the JSON-array exec form) so $PORT actually expands —
 # exec-form CMD does not invoke a shell and would pass the literal
 # string "$PORT" to uvicorn.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Sprint 14 -- run any pending Alembic migrations before the app starts.
+# alembic upgrade head is safe to run every boot: it's a no-op once the
+# database is already current, so this doesn't need Render's paid Shell
+# or a separate one-off job -- it just happens automatically on deploy.
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
