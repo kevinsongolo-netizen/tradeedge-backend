@@ -6,6 +6,63 @@ full Python/FastAPI backend; the entries below are grouped by area
 rather than by individual commit, since Sprint 6 shipped as one
 coherent body of work.
 
+## [14.0.0] — Sprint 14: Live MT5 Feed
+
+Fourth slice of the Sprint 10 "future expansion" roadmap: a live data
+bridge from an MT5 Expert Advisor (via MQL5's WebRequest) into the
+Chart Analysis Engine, so it stays auto-filled with fresh candles
+without the user re-pasting them, plus free MT5 mobile push
+notifications the moment a valid setup forms.
+
+**This is the first schema change since Sprint 9** — see "Database
+migration required" below before deploying.
+
+### Added
+
+- `live_snapshots` table (`app/db/models/live_snapshot.py`,
+  migration `0003_live_snapshots`) — stores the latest ingested
+  Chart Analysis Engine result per (user, symbol, timeframe). One row
+  per key; each new ingest overwrites the previous snapshot (a "latest
+  live view", not a data warehouse — use Backtesting or the trade
+  journal for history).
+- `POST /api/v1/live/ingest` — an MT5 EA (or any other live source)
+  pushes fresh candles here on every push interval. Runs the exact
+  same Level 1/2/3 pipeline as `/chart/full-analysis/candles` (no
+  engine code duplicated) and persists the result. Supports
+  `?format=plain` — a few `KEY=value` lines instead of JSON, since
+  MQL5 has no built-in JSON parser; the EA reads this directly and
+  calls `SendNotification()` itself when `STATUS=VALID`.
+- `GET /api/v1/live/latest?symbol=&timeframe=` — the website polls
+  this to display the latest live analysis. Returns 404 with a clear
+  message until the EA has pushed at least one update.
+- `tools/mt5/TradeEdgeLiveFeed.mq5` — a ready-to-use MT5 Expert
+  Advisor. Attach it to any chart; it pushes that chart's candles (plus
+  optional M15 candles for automatic multi-timeframe confirmation,
+  reusing Sprint 12's `confirm_with_m15`) to the backend on a timer,
+  and sends a free MT5 mobile push notification whenever the backend
+  says a setup is VALID (rate-limited so it doesn't repeat the same
+  alert more than once per hour by default). Full setup instructions
+  are in the file's header comment.
+- Frontend: a third "Live feed (from MT5)" mode on the Chart Analysis
+  Engine card — enter the same symbol/timeframe the EA is using, click
+  to load (or check "Auto-refresh every 30 seconds"), and it renders
+  through the exact same four panels as the other two reading paths.
+
+### Database migration required
+
+This sprint adds one new table. After merging this code, run the
+existing migration workflow once more against your live Supabase
+database (same steps as the original Sprint 6 setup):
+`alembic upgrade head` with `DATABASE_URL` pointed at your production
+connection string. No existing tables or data are touched.
+
+### Tests
+
+- `tests/api/test_live.py` (6 tests) — ingest/latest round trip,
+  upsert-not-duplicate behavior, per-symbol isolation, the plain-text
+  response format, and input validation. Uses the same in-memory
+  SQLite test database as every other DB-backed test in this project.
+
 ## [13.0.0] — Sprint 13: Backtesting Engine
 
 Third slice of the Sprint 10 "future expansion" roadmap: replays the

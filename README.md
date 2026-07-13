@@ -527,6 +527,37 @@ Live MT5/TradingView data connections and an ML confidence model are
 scoped but intentionally not started — the ML model in particular
 needs far more labeled trade history than exists yet to be meaningful.
 
+## Live MT5 Feed (Sprint 14)
+
+Fourth slice of the Chart Analysis Engine's "future expansion" roadmap.
+Lets an MT5 Expert Advisor push fresh candles to the backend on a
+timer, so the website's Chart Analysis Engine stays auto-filled
+without re-pasting candles, and MT5 sends a free mobile push
+notification the moment a valid setup forms.
+
+**First schema change since Sprint 9** — run `alembic upgrade head`
+against your live database before/after deploying this.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/live/ingest` | Runs the same full analysis pipeline as `/chart/full-analysis/candles` and stores the latest result per (user, symbol, timeframe). Supports `?format=plain` (simple `KEY=value` lines) for the MQL5 EA, which has no JSON parser. |
+| `GET /api/v1/live/latest?symbol=&timeframe=` | Returns the latest stored analysis for that symbol/timeframe, or 404 if nothing has been pushed yet. |
+
+`tools/mt5/TradeEdgeLiveFeed.mq5` is a ready-to-attach Expert Advisor:
+it pushes chart candles (and optionally M15 candles for multi-timeframe
+confirmation) on a timer, and calls MT5's `SendNotification()` when the
+backend reports a VALID setup. Setup steps are in the file's header
+comment: whitelist the backend URL under Tools → Options → Expert
+Advisors → "Allow WebRequest for listed URL", optionally set a
+MetaQuotes ID under Tools → Options → Notifications, attach the EA to
+a chart, then select "Live feed (from MT5)" on the website's Chart
+Analysis Engine with the matching symbol/timeframe.
+
+### Future expansion (not yet built)
+
+TradingView integration and an ML confidence model are scoped but
+intentionally not started.
+
 ## Production readiness notes (post-Sprint-7 audit)
 
 A full production-readiness audit was done after Sprint 7 shipped.

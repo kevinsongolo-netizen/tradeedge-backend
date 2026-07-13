@@ -5,6 +5,7 @@ before Alembic autogenerate or ``Base.metadata.create_all`` runs (used
 by the test suite's in-memory SQLite fixtures).
 """
 from app.db.models.ai_analysis import AIAnalysis
+from app.db.models.live_snapshot import LiveSnapshot
 from app.db.models.ml_export import MLExport, MLModel
 from app.db.models.trade import Trade
 from app.db.models.user import User
@@ -17,4 +18,5 @@ __all__ = [
     "ScoringWeights",
     "MLExport",
     "MLModel",
+    "LiveSnapshot",
 ]

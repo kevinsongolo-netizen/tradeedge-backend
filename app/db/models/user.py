@@ -19,6 +19,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.db.models.ai_analysis import AIAnalysis
+    from app.db.models.live_snapshot import LiveSnapshot
     from app.db.models.ml_export import MLExport, MLModel
     from app.db.models.trade import Trade
     from app.db.models.weights import ScoringWeights
@@ -56,6 +57,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     ml_models: Mapped[list["MLModel"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    live_snapshots: Mapped[list["LiveSnapshot"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
