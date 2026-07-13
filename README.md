@@ -511,6 +511,22 @@ Confirmation" panel in the Chart Analysis Engine card, and a new
 Backtesting, live MT5/TradingView data connections, and an ML
 confidence model are scoped but intentionally not started.
 
+## Backtesting Engine (Sprint 13)
+
+Third slice of the Chart Analysis Engine's "future expansion" roadmap.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/backtest/run` | Replays the SMC engine + trade validator against historical candles (no lookahead) — returns win rate, R-multiple stats, profit factor, and a per-trade list. Max 2000 candles per run. |
+
+Frontend: a "Backtest" card in AI Insights.
+
+### Future expansion (not yet built)
+
+Live MT5/TradingView data connections and an ML confidence model are
+scoped but intentionally not started — the ML model in particular
+needs far more labeled trade history than exists yet to be meaningful.
+
 ## Production readiness notes (post-Sprint-7 audit)
 
 A full production-readiness audit was done after Sprint 7 shipped.

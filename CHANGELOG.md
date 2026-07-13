@@ -6,6 +6,45 @@ full Python/FastAPI backend; the entries below are grouped by area
 rather than by individual commit, since Sprint 6 shipped as one
 coherent body of work.
 
+## [13.0.0] — Sprint 13: Backtesting Engine
+
+Third slice of the Sprint 10 "future expansion" roadmap: replays the
+existing deterministic SMC engine + Level 2 trade validator against
+historical candle data to see how the current rules would have
+performed. No machine learning — this tests the *existing rules* the
+same way a trader would manually review a chart, one candle at a time,
+with zero lookahead bias.
+
+### Added
+
+- `app/backtest/backtest_engine.py` — `run_backtest()`. Walks a candle
+  series with a rolling lookback window, re-running the real
+  `analyze_candles()` + `validate_trade()` at each step exactly as a
+  trader would see the chart forming; whenever the rules say VALID, a
+  hypothetical trade opens at the *next* candle's open (never the
+  current one, to avoid lookahead) and is walked forward candle by
+  candle until its stop-loss or take-profit is hit. Aggregates win
+  rate, total/average R-multiple, and profit factor. Only one trade is
+  "open" at a time, matching how a single trader actually operates.
+- `POST /api/v1/backtest/run` — new stateless `backtest` router.
+  Accepts up to 2000 candles per run; requires at least 15 to produce
+  a meaningful result.
+- Frontend: a new "Backtest" card in AI Insights — paste a longer
+  candle series, set the lookback window/min R:R/direction filter, and
+  get back summary stats plus a scrollable per-trade list.
+
+### Tests
+
+- `tests/backtest/test_backtest_engine.py` (9 tests) — the SL/TP-hit
+  simulation logic tested directly, input-validation guardrails, and
+  full orchestration (entry/exit lifecycle, stats math) tested by
+  mocking the engine's two dependencies so exact win/loss scenarios are
+  fully controlled rather than reverse-engineered from real candle
+  data.
+- `tests/api/test_backtest.py` (2 tests) — one true end-to-end test
+  with no mocking (real candle data through the real engine), to
+  confirm the whole chain is wired correctly.
+
 ## [12.0.0] — Sprint 12: Market Context Filters
 
 Second slice of the Sprint 10 "future expansion" roadmap: trading

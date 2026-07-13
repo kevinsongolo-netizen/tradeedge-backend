@@ -1,0 +1,40 @@
+"""Backtesting schemas (Sprint 13)."""
+from __future__ import annotations
+
+from pydantic import Field
+
+from app.schemas.chart import CandleIn
+from app.schemas.common import CamelModel
+
+
+class BacktestRequest(CamelModel):
+    candles: list[CandleIn] = Field(min_length=1)
+    lookback_window: int = 100
+    min_rr: float = 2.0
+    direction: str | None = None
+
+
+class BacktestTradeOut(CamelModel):
+    entry_index: int
+    entry_time: str
+    direction: str
+    entry: float
+    stop_loss: float
+    take_profit: float
+    exit_time: str | None = None
+    exit_price: float | None = None
+    outcome: str  # "WIN" | "LOSS" | "OPEN"
+    r_multiple: float | None = None
+
+
+class BacktestResult(CamelModel):
+    total_trades: int
+    wins: int
+    losses: int
+    open_trades: int
+    win_rate: float
+    total_r_multiple: float
+    average_r_multiple: float
+    profit_factor: float | None = None
+    trades: list[BacktestTradeOut] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
