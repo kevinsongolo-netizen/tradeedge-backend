@@ -46,7 +46,29 @@ int    g_posDirections[]; // +1 = buy, -1 = sell
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   // Rebuild the entry/SL tracking table from whatever positions are
+   // CURRENTLY open, so that R:R still computes correctly for a trade
+   // that was opened before this EA was (re)attached or recompiled --
+   // otherwise the in-memory arrays below start empty on every restart
+   // and any position opened in a previous run closes with no R:R.
+   int rebuilt = 0;
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+
+      long posId = (long)PositionGetInteger(POSITION_IDENTIFIER);
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl = PositionGetDouble(POSITION_SL);
+      int direction = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 1 : -1;
+
+      TrackPositionOpen(posId, entry, sl, direction);
+      rebuilt++;
+   }
+
    Print("TradeEdge Auto-Journal: watching this account for trade open/close events. ",
+         "Restored R:R tracking for ", rebuilt, " currently-open position(s). ",
          "Run only ONE copy of this EA across all your charts.");
    return(INIT_SUCCEEDED);
 }
@@ -123,6 +145,23 @@ string YyyyMmDd(datetime t)
 }
 
 //+------------------------------------------------------------------+
+//| Same session buckets as the website's own sessionFromHour() JS    |
+//| helper (used for its CSV/Excel import) -- kept identical so a     |
+//| trade auto-filled by this EA matches what manual import would've  |
+//| picked. Uses the trade's open hour in your BROKER'S SERVER time,  |
+//| same as that existing feature -- if your broker's server timezone |
+//| doesn't line up with these windows, just correct it on the site.  |
+//+------------------------------------------------------------------+
+string SessionFromHour(int hour)
+{
+   if(hour >= 0 && hour < 7)  return "Asian";
+   if(hour >= 7 && hour < 12) return "London";
+   if(hour >= 12 && hour < 16) return "London/NY Overlap";
+   if(hour >= 16 && hour < 21) return "New York";
+   return "Asian";
+}
+
+//+------------------------------------------------------------------+
 //| Maps MT5's own close reason to a human exit reason string, so the |
 //| journal is pre-filled with something useful instead of "Unknown". |
 //+------------------------------------------------------------------+
@@ -192,15 +231,28 @@ void HandlePositionOpen(ulong dealTicket, long positionId, string symbol)
    long account = AccountInfoInteger(ACCOUNT_LOGIN);
    string id = "mt5-" + IntegerToString(account) + "-" + IntegerToString(positionId);
 
+   // Use the DIGITS of the symbol actually being traded, not _Digits
+   // (which is the digits of whatever chart this EA happens to be
+   // attached to). This EA tracks trades across every symbol, so
+   // formatting with the chart's own digits would wrongly truncate
+   // prices for any other symbol (e.g. a 2-digit index chart would
+   // round forex entries like 0.81340 down to 0.81).
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
+   MqlDateTime tm;
+   TimeToStruct(openTime, tm);
+   string session = SessionFromHour(tm.hour);
+
    string body = "{";
    body += "\"id\":\"" + id + "\",";
    body += "\"date\":\"" + YyyyMmDd(openTime) + "\",";
    body += "\"pair\":\"" + symbol + "\",";
    body += "\"direction\":\"" + (direction > 0 ? "buy" : "sell") + "\",";
    body += "\"asset\":\"" + GuessAsset(symbol) + "\",";
-   body += "\"entry\":" + DoubleToString(entry, _Digits) + ",";
-   if(sl > 0) body += "\"sl\":" + DoubleToString(sl, _Digits) + ",";
-   if(tp > 0) body += "\"tp\":" + DoubleToString(tp, _Digits) + ",";
+   body += "\"session\":\"" + session + "\",";
+   body += "\"entry\":" + DoubleToString(entry, digits) + ",";
+   if(sl > 0) body += "\"sl\":" + DoubleToString(sl, digits) + ",";
+   if(tp > 0) body += "\"tp\":" + DoubleToString(tp, digits) + ",";
    body += "\"lots\":" + DoubleToString(volume, 2);
    body += "}";
 
@@ -229,6 +281,10 @@ void HandlePositionClose(ulong dealTicket, long positionId, string symbol)
    long account = AccountInfoInteger(ACCOUNT_LOGIN);
    string id = "mt5-" + IntegerToString(account) + "-" + IntegerToString(positionId);
 
+   // Same reasoning as HandlePositionOpen: use the traded symbol's own
+   // digits, not the attached chart's _Digits.
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
    // Realized R-multiple, only if we saw this position's own open event
    // in this same EA session and it had a stop loss set.
    double rr = 0;
@@ -247,7 +303,7 @@ void HandlePositionClose(ulong dealTicket, long positionId, string symbol)
 
    string body = "{";
    body += "\"id\":\"" + id + "\",";
-   body += "\"exit\":" + DoubleToString(exitPrice, _Digits) + ",";
+   body += "\"exit\":" + DoubleToString(exitPrice, digits) + ",";
    body += "\"pnl\":" + DoubleToString(profit, 2);
    if(haveRr) body += ",\"rr\":" + DoubleToString(rr, 2);
    if(haveExitReason) body += ",\"exitReason\":\"" + exitReason + "\"";
