@@ -15,6 +15,7 @@ from typing import Any
 from app.chart import normalize
 from app.chart.candle_smc_engine import analyze_candles
 from app.chart.coach_explainer import explain
+from app.chart.htf_ltf_ob_strategy import validate_h4_m15_ob
 from app.chart.multi_timeframe import confirm_with_m15
 from app.chart.trade_validator import _direction_from_bias, validate_trade
 from app.chart.vision_provider import VisionProviderError, get_vision_provider
@@ -55,28 +56,30 @@ class ChartService:
         analysis = ChartAnalysis(**analysis_dict)
 
         multi_timeframe: dict[str, Any] | None = None
-        effective_m15_bos = has_m15_bos
-        effective_m15_choch = has_m15_choch
-        effective_m15_entry = has_m15_entry_confirmation
         if m15_candles:
             m15_analysis_dict = await self.analyze_candles(m15_candles)
             m15_analysis = ChartAnalysis(**m15_analysis_dict)
+            # Still computed for informational display (BOS/CHOCH/trend
+            # agreement on M15) -- purely descriptive now, no longer used
+            # to gate anything (see the active strategy below).
             resolved_direction = direction or _direction_from_bias(analysis.bias) or "buy"
             multi_timeframe = confirm_with_m15(m15_analysis, resolved_direction)
-            effective_m15_bos = effective_m15_bos or multi_timeframe["has_m15_bos"]
-            effective_m15_choch = effective_m15_choch or multi_timeframe["has_m15_choch"]
-            effective_m15_entry = effective_m15_entry or multi_timeframe["has_m15_entry_confirmation"]
 
-        validation = self.validate(
-            analysis,
-            direction=direction,
-            planned_rr=planned_rr,
-            has_m15_bos=effective_m15_bos,
-            has_m15_choch=effective_m15_choch,
-            has_m15_entry_confirmation=effective_m15_entry,
-            has_liquidity_sweep=has_liquidity_sweep,
-            min_rr=min_rr,
-        )
+        # --- ACTIVE STRATEGY: H4 -> M15 Order Block (the user's own
+        # rules -- see app/chart/htf_ltf_ob_strategy.py for the exact
+        # touch/entry/SL/TP logic). Needs the RAW SmcAnalysis objects
+        # (order block coordinates, price_in_order_block), not the
+        # normalized ChartAnalysis shape used above, so the candle math
+        # is run a second time here -- cheap, pure function, no I/O.
+        #
+        # The previous "Classic Bias" strategy (trend + premium/discount
+        # + BOS/CHOCH, min-R:R gate -- app/chart/trade_validator.py) is
+        # kept fully intact and untouched for later reuse; only this one
+        # line changed to swap which validator is active:
+        h4_smc = analyze_candles(candles)
+        m15_smc = analyze_candles(m15_candles) if m15_candles else None
+        validation = validate_h4_m15_ob(h4_smc, m15_smc)
+
         coach_result = self.coach(analysis, validation, min_rr)
         return {
             "analysis": analysis_dict,

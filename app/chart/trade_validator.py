@@ -1,5 +1,14 @@
-"""Trade validation against SMC trading rules (Chart Analysis Engine —
-Level 2).
+"""CLASSIC BIAS STRATEGY (Chart Analysis Engine — Level 2).
+
+This is the ORIGINAL trade-validation strategy, kept fully intact and
+unused-by-default so it can be swapped back in later -- the currently
+ACTIVE strategy is ``app.chart.htf_ltf_ob_strategy`` (the user's own
+H4 order-block-touch -> M15 order-block-touch entry method), wired in
+by ``ChartService.full_analysis_from_candles``. Nothing in this file
+was changed when that switch happened; this module is simply no
+longer called from the live/scanner path. To reuse "Classic Bias"
+again, swap ``ChartService.full_analysis_from_candles`` back to call
+``validate_trade`` (this module) instead of ``validate_h4_m15_ob``.
 
 Pure function of a ``ChartAnalysis`` (already normalized from either
 Level-1 reading path — see ``app.chart.normalize``) plus a handful of
