@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -90,6 +90,14 @@ class MLModel(Base):
     training_rows: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Sprint 17 fix -- Render's free tier has no persistent disk, so a
+    # trained joblib artifact written to `file_path` vanishes the next
+    # time the service spins down and restarts, even though this DB row
+    # (which lives in Postgres, unaffected by container restarts) still
+    # says a model is active. Storing the serialized model bytes here
+    # too means MLPredictionService can always reload it from the DB as
+    # a fallback instead of crashing with FileNotFoundError.
+    model_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     user: Mapped["User"] = relationship(back_populates="ml_models")

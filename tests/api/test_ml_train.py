@@ -160,3 +160,29 @@ def test_predict_with_minimal_fields_does_not_crash(client):
     client.post("/api/v1/ml/train", json={})
     resp = client.post("/api/v1/ml/predict", json={"pair": "GBPUSD"})
     assert resp.status_code == 200
+
+
+def test_predict_survives_missing_model_file_on_disk(client, tmp_path, monkeypatch):
+    """Regression test for a real production bug: Render's free tier
+    has no persistent disk, so the joblib file POST /ml/train writes
+    gets wiped the next time the container restarts, even though the
+    ml_models DB row (Postgres, unaffected by restarts) still says a
+    model is active. Simulates exactly that -- delete the file after
+    training, before predicting -- and confirms prediction still
+    succeeds via the model_blob DB fallback instead of a 500."""
+    import os
+
+    _seed_trades(client, n=35)
+    train_resp = client.post("/api/v1/ml/train", json={})
+    assert train_resp.status_code == 200
+    model_path = train_resp.json()["modelPath"]
+
+    assert os.path.exists(model_path)
+    os.remove(model_path)
+    assert not os.path.exists(model_path)
+
+    resp = client.post("/api/v1/ml/predict", json={"pair": "EURUSD"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 0.0 <= body["winProbability"] <= 1.0
+    assert body["modelVersion"] == "v1"

@@ -89,9 +89,18 @@ async def test_model_cache_avoids_reloading_from_disk(monkeypatch, tmp_path):
 
     monkeypatch.setattr(svc, "load_model", counting_load)
 
-    await svc._load_cached_model(1, str(path))
-    await svc._load_cached_model(1, str(path))
-    await svc._load_cached_model(1, str(path))
+    # _load_cached_model() takes the MLModel DB row itself (not a bare
+    # path) since Sprint 17 -- it needs .version for the cache key and
+    # .model_blob as a fallback if .file_path is missing on disk.
+    class _FakeModelRow:
+        version = "v1"
+        file_path = str(path)
+        model_blob = None
+
+    model_row = _FakeModelRow()
+    await svc._load_cached_model(1, model_row)
+    await svc._load_cached_model(1, model_row)
+    await svc._load_cached_model(1, model_row)
 
     assert calls["n"] == 1, "second and third calls should hit the cache, not disk"
     svc._MODEL_CACHE.clear()

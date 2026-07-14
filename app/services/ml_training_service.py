@@ -21,7 +21,7 @@ from app.db.repositories.ml_model_repo import MLModelRepository
 from app.errors import ConflictError
 from app.ml.dataset_validation import generate_validation_report
 from app.ml.features import FEATURE_COLUMNS, prepare_training_data
-from app.ml.persistence import model_filename, next_version, save_model
+from app.ml.persistence import model_filename, next_version, save_model, save_model_bytes
 from app.ml.train import InsufficientDataError, train_and_compare
 from app.services.ml_service import MLService
 
@@ -83,6 +83,12 @@ class MLTrainingService:
             "overfitWarning": outcome.overfit_warning,
         }
         save_model(path, outcome.pipeline, metadata)
+        # Sprint 17 fix -- also persist the model bytes in the DB row
+        # itself (Postgres survives container restarts; the on-disk
+        # file above does not on Render's free tier). See
+        # MLPredictionService._load_cached_model for the read-side
+        # fallback this enables.
+        model_blob = save_model_bytes(outcome.pipeline, metadata)
 
         try:
             await self.model_repo.insert_and_activate(
@@ -101,6 +107,7 @@ class MLTrainingService:
                         "overfitWarning": outcome.overfit_warning,
                     },
                     "file_path": str(path),
+                    "model_blob": model_blob,
                 },
             )
             await self.session.commit()

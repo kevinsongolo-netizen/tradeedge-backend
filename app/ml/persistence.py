@@ -10,6 +10,7 @@ on-disk artifact a given row points to.
 """
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Any
 
@@ -45,3 +46,19 @@ def load_model(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"No model artifact at {path}")
     return joblib.load(path)
+
+
+def save_model_bytes(pipeline: Any, metadata: dict[str, Any]) -> bytes:
+    """Sprint 17 fix -- same artifact as save_model(), serialized to an
+    in-memory buffer instead of a file, so it can be stored directly in
+    the ``ml_models.model_blob`` DB column. This is what actually
+    survives a Render free-tier container restart; the on-disk file
+    written by save_model() is only a same-instance speed optimization."""
+    buffer = io.BytesIO()
+    joblib.dump({"pipeline": pipeline, "metadata": metadata}, buffer)
+    return buffer.getvalue()
+
+
+def load_model_bytes(blob: bytes) -> dict[str, Any]:
+    """load_model_bytes(blob) -> {"pipeline": ..., "metadata": {...}}."""
+    return joblib.load(io.BytesIO(blob))

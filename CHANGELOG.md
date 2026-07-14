@@ -6,6 +6,66 @@ full Python/FastAPI backend; the entries below are grouped by area
 rather than by individual commit, since Sprint 6 shipped as one
 coherent body of work.
 
+## [16.0.0] — Sprint 17 fix: ML model no longer vanishes on restart
+
+Real production bug, caught live: after training the ML Confidence
+Model, `POST /api/v1/assistant/pretrade-analysis` started returning
+500s with `FileNotFoundError: No model artifact at
+/app/data/models/tradeedge_ml_user{id}_{version}.joblib`.
+
+Root cause: Render's free tier has no persistent disk. The trained
+model was only ever written to local container disk; the `ml_models`
+Postgres row (which does survive restarts) kept saying a model was
+active, but the file itself was wiped the next time the free instance
+spun down from inactivity and restarted.
+
+### Fixed
+
+- `ml_models` gained a new `model_blob` column (migration
+  `0004_ml_model_blob`) storing the fitted model's bytes directly in
+  Postgres alongside the existing on-disk file.
+- `POST /ml/train` now writes both: the on-disk file (fast path for a
+  still-warm container) and `model_blob` (the real fix — survives
+  restarts).
+- `MLPredictionService` now tries the on-disk file first, and falls
+  back to deserializing `model_blob` from the DB if the file is
+  missing, instead of raising.
+- Added `tests/api/test_ml_train.py::test_predict_survives_missing_model_file_on_disk`
+  — a direct regression test that deletes the trained model file after
+  training (simulating exactly what a Render restart does) and
+  confirms prediction still succeeds.
+
+No API contract changes — existing endpoints, request/response shapes
+are unchanged. A fresh `alembic upgrade head` picks up the new column
+automatically on the next deploy (already wired into the Docker
+startup command since Sprint 14).
+
+## [15.0.0] — Sprint 15: ML Confidence Model, surfaced
+
+No backend changes this sprint — Sprint 7 already shipped a complete
+training/prediction pipeline (`POST /api/v1/ml/train`,
+`POST /api/v1/ml/predict`, `GET /api/v1/ml/dataset/validation-report`,
+`GET /api/v1/ml/models/active`) with a real "not enough data yet"
+guard rail (`MIN_TRAINING_ROWS = 30` valid trades, enforced as a 422
+before any training runs) and it was already quietly powering Sprint
+8's Pre-Trade Check via `MLPredictionService`. It just had no frontend
+surface, so nothing about it was visible or actionable to the user.
+
+### Added (frontend only)
+
+- New "AI Confidence Model (Machine Learning)" card in AI Insights:
+  a "Check my trade data" button showing exactly how many valid
+  trades are logged out of the 30 required (with a progress bar), a
+  "Train model" button, and a persistent "current active model"
+  status line (version, algorithm, trained-at date, trade count
+  used). Training on too little data shows the backend's real 422
+  message rather than failing silently or guessing.
+- Pre-Trade Check's output now honestly labels whether its win
+  probability came from the trained ML model (`mlAvailable`, model
+  version, algorithm) or is a rule-based-only estimate because no
+  model has been trained yet -- previously these fields were returned
+  by the API but never shown.
+
 ## [14.0.0] — Sprint 14: Live MT5 Feed
 
 Fourth slice of the Sprint 10 "future expansion" roadmap: a live data
