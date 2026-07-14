@@ -54,6 +54,58 @@ def test_get_trade_by_id(client):
     assert resp.json()["id"] == "trade-1"
 
 
+def test_open_then_close_upsert_partial_fields_dont_null_each_other(client):
+    """Regression coverage for Sprint 17 (MT5 auto-journal EA): the EA
+    posts a trade's open fields when a position opens (no exit/pnl yet
+    -- the position isn't closed), then posts again with the SAME id
+    and only the close fields (exit/pnl/exitReason) once it closes.
+    The second call must not null out entry/sl/tp/direction/pair from
+    the first -- upsert() only touches keys actually present in each
+    request body (Pydantic's exclude_unset), never the whole row."""
+    open_payload = {
+        "id": "mt5-12345-987",
+        "date": "2026-07-14",
+        "pair": "gbpusd",
+        "direction": "buy",
+        "asset": "Forex",
+        "entry": 1.3400,
+        "sl": 1.3350,
+        "tp": 1.3500,
+        "lots": 0.10,
+    }
+    resp = client.post("/api/v1/trades", json=open_payload)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["exit"] is None
+    assert body["pnl"] is None
+    assert body["entry"] == 1.3400
+
+    close_payload = {
+        "id": "mt5-12345-987",
+        "exit": 1.3480,
+        "pnl": 80.0,
+        "exitReason": "Take Profit Hit",
+    }
+    resp = client.post("/api/v1/trades", json=close_payload)
+    assert resp.status_code == 201
+    body = resp.json()
+    # Fields only sent at open time must survive the close-only update.
+    assert body["pair"] == "GBPUSD"
+    assert body["direction"] == "buy"
+    assert body["entry"] == 1.3400
+    assert body["sl"] == 1.3350
+    assert body["tp"] == 1.3500
+    assert body["lots"] == 0.10
+    # Fields sent at close time are now populated.
+    assert body["exit"] == 1.3480
+    assert body["pnl"] == 80.0
+    assert body["exitReason"] == "Take Profit Hit"
+
+    fetched = client.get("/api/v1/trades/mt5-12345-987").json()
+    assert fetched["exit"] == 1.3480
+    assert fetched["entry"] == 1.3400
+
+
 def test_get_missing_trade_returns_404_envelope(client):
     resp = client.get("/api/v1/trades/does-not-exist")
     assert resp.status_code == 404

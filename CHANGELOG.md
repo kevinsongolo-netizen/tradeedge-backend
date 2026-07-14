@@ -6,6 +6,47 @@ full Python/FastAPI backend; the entries below are grouped by area
 rather than by individual commit, since Sprint 6 shipped as one
 coherent body of work.
 
+## [17.0.0] — Sprint 17: Auto-journal linking from MT5
+
+Closes a real gap from the original roadmap ("automatic trade
+journaling"). No new backend endpoint needed — `POST /api/v1/trades`
+was already upsert-by-id (Sprint 6), and only touches fields actually
+present in each request body, so an "open" event and a later "close"
+event for the same id can't blank each other out. Confirmed with a new
+regression test before writing any EA code
+(`test_open_then_close_upsert_partial_fields_dont_null_each_other`).
+
+### Added
+
+- `tools/mt5/TradeEdgeAutoJournal.mq5` — a new Expert Advisor, run once
+  per account (attach to any single chart), that hooks
+  `OnTradeTransaction` and detects the account's own real position
+  opens/closes (however they were placed — manually, mobile, another
+  EA). On open, POSTs `{id, date, pair, direction, asset, entry, sl,
+  tp, lots}` with `id = "mt5-{account}-{positionId}"`. On close, POSTs
+  the same `id` with just `{exit, pnl, rr, exitReason}` — the realized
+  R-multiple is computed from the SL captured at open time (tracked
+  in-memory per position for the EA's lifetime), and `exitReason` is
+  mapped from MT5's own `DEAL_REASON` (Stop Loss Hit / Take Profit Hit
+  / Manual Close / Stop Out / Closed by EA). Places no trades and
+  changes nothing in the account — read-only observer.
+- Frontend: a "Check for new trades" button + optional 60-second
+  auto-check under "Sync my trades to AI backend" in AI Insights. Pulls
+  everything with an `mt5-` id from `GET /api/v1/trades`, maps backend
+  field names back to the website's local journal shape (confirmed via
+  `toBackendTrade()`'s existing mapping — the one naming difference is
+  local `poi` ↔ backend `h4PoiType`), and merges into the local journal
+  (`getCurrentJournal()`/`saveJournal()`/`renderJournal()`) — updating
+  in place by exact `id` match rather than duplicating, and merging
+  only the mechanical fields MT5 reports so it never overwrites notes,
+  tags, or rules-followed the user already filled in by hand.
+
+### Tests
+
+- `tests/api/test_trades.py::test_open_then_close_upsert_partial_fields_dont_null_each_other`
+  — the exact open→close upsert sequence the new EA performs, run
+  directly against the API.
+
 ## [16.0.0] — Sprint 17 fix: ML model no longer vanishes on restart
 
 Real production bug, caught live: after training the ML Confidence
