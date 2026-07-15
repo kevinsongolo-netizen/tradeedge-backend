@@ -19,6 +19,20 @@ from typing import Any
 ML_DATASET_VERSION = "6.0"
 
 #: Required for a row to be considered valid/exportable (Section 8.8).
+#
+# Sprint 18 note: ``rr``, ``rule_score``, ``execution_score``, and
+# ``overall_score`` were dropped from this list. They come from the
+# *old* H4->M15 strategy's fixed-SL/TP risk math and its rule-checklist
+# scoring flow -- the active Personal Averaging Strategy has neither
+# (no fixed stop loss/take profit to compute an R:R from, and no
+# equivalent scoring UI yet), so every trade logged under the new
+# strategy was permanently missing these fields and being excluded
+# from ML training with 0 valid trades regardless of real sample size.
+# The feature pipeline (app/ml/features.py) already imputes missing
+# numeric values for exactly this reason, so relaxing the requirement
+# here is safe -- these fields still get used as features WHEN present
+# (e.g. for old-strategy trades still in someone's history), just no
+# longer block a row from being a valid training example when absent.
 ML_REQUIRED_FIELDS = [
     "id",
     "date",
@@ -27,11 +41,7 @@ ML_REQUIRED_FIELDS = [
     "asset",
     "entry",
     "pnl",
-    "rr",
     "session",
-    "rule_score",
-    "execution_score",
-    "overall_score",
     "outcome",
 ]
 ML_VALID_DIRECTIONS = ["buy", "sell"]

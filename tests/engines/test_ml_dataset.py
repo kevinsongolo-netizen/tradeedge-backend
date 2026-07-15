@@ -63,3 +63,21 @@ def test_csv_row_count_matches_input():
     rows = build_dataset(ENTRIES)
     csv_text = to_csv(rows)
     assert len(csv_text.splitlines()) == len(rows) + 1  # header + rows
+
+
+def test_validate_row_no_longer_requires_old_strategy_scoring_fields():
+    """Sprint 18 regression test: the active Personal Averaging Strategy
+    has no fixed SL/TP (so no natural R:R) and no rule-checklist scoring
+    UI yet, so a real trade logged under it will never have rr/
+    rule_score/execution_score/overall_score. Before this fix, every
+    such trade was permanently excluded from ML training (0 valid
+    trades regardless of real sample size) -- confirmed against a
+    user's actual logged data. These fields must not be required."""
+    row = {
+        "id": "1", "date": "2026-01-01", "pair": "GOLD", "direction": "buy",
+        "asset": "Metals", "entry": 4050.3, "pnl": 1.03, "session": "Asian",
+        "outcome": "Win",
+    }
+    result = validate_row(row)
+    assert result["valid"] is True
+    assert result["errors"] == []
