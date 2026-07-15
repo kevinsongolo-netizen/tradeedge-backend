@@ -182,3 +182,64 @@ def test_pretrade_analysis_missing_m15_candles_is_422(client):
     del body["m15Candles"]
     resp = client.post("/api/v1/assistant/pretrade-analysis", json=body)
     assert resp.status_code == 422
+
+
+# ---------- Live Feed path (no candle paste needed) ----------
+
+import app.services.chart_service as chart_service  # noqa: E402
+
+
+def _seed_live_snapshot(client, symbol, timeframe, validation):
+    """Seeds a live_snapshots row via the real ingest endpoint, with
+    validate_h4_m15_ob patched (same monkeypatch strategy used above)
+    so we control VALID vs WAIT without needing real market structure."""
+    import app.services.chart_service as cs
+
+    orig = cs.validate_h4_m15_ob
+    cs.validate_h4_m15_ob = lambda h4, m15: validation
+    try:
+        resp = client.post(
+            "/api/v1/live/ingest",
+            json={"symbol": symbol, "timeframe": timeframe, "candles": _CANDLES_PAYLOAD},
+        )
+        assert resp.status_code == 200, resp.text
+    finally:
+        cs.validate_h4_m15_ob = orig
+
+
+def test_pretrade_live_no_data_yet_is_404(client):
+    resp = client.post(
+        "/api/v1/assistant/pretrade-analysis-live",
+        json={"pair": "EURUSD", "symbol": "EURUSD", "timeframe": "H4"},
+    )
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_pretrade_live_wait_skips_ml(client):
+    _seed_live_snapshot(client, "EURUSD", "H4", _fake_wait())
+    resp = client.post(
+        "/api/v1/assistant/pretrade-analysis-live",
+        json={"pair": "EURUSD", "symbol": "EURUSD", "timeframe": "H4"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["tradeStatus"] == "INVALID"
+    assert body["recommendation"] == "WAIT"
+    assert body["mlAvailable"] is False
+    assert len(body["ruleChecks"]) == 4
+
+
+def test_pretrade_live_valid_uses_stored_validation(client):
+    _seed_live_snapshot(client, "GBPUSD", "H4", _fake_valid())
+    resp = client.post(
+        "/api/v1/assistant/pretrade-analysis-live",
+        json={"pair": "GBPUSD", "session": "London", "symbol": "GBPUSD", "timeframe": "H4"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["tradeStatus"] == "VALID"
+    assert body["recommendation"] == "TAKE"
+    assert body["direction"] == "buy"
+    assert body["suggestedEntry"] == 1.1000
+    assert any("official strategy passed" in s for s in body["strengths"])

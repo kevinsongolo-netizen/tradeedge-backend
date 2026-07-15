@@ -25,6 +25,21 @@ class PreTradeAnalysisRequest(CamelModel):
     m15_candles: list[CandleIn] = Field(min_length=1)
 
 
+class PreTradeFromLiveRequest(CamelModel):
+    """Alternative to ``PreTradeAnalysisRequest`` for traders whose MT5
+    EA is already pushing live candles -- avoids needing to manually
+    copy/paste H4+M15 OHLC rows by reusing whatever the Live MT5 Feed
+    (Sprint 14) already computed for this symbol/timeframe, the exact
+    same way Chart Analysis Engine's "Live feed" mode and the Scanner
+    already do."""
+
+    pair: str
+    asset: str | None = None
+    session: str | None = None
+    symbol: str
+    timeframe: str
+
+
 class PreTradeAnalysisResult(CamelModel):
     # --- the ONE official strategy's own decision -- never overridden ---
     trade_status: str  # "VALID" | "INVALID"
