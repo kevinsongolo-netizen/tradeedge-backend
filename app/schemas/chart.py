@@ -116,13 +116,22 @@ class ConfidenceBreakdown(CamelModel):
     ``app.chart.htf_ltf_ob_strategy``) -- each step is 100 if it
     passed, 0 if it failed or was never reached, so there is no
     second, independent quality score competing with the actual
-    trade-validity decision."""
+    trade-validity decision.
 
-    h4_poi: int
-    m15_poi: int
-    poi_alignment: int
-    entry_target: int
-    overall: int
+    All fields default to 0 rather than being required: ``live_snapshots``
+    rows persist this dict as raw JSON, so anything ingested before this
+    schema changed field names (the old trendAlignment/poiQuality/...
+    shape) would otherwise fail Pydantic validation on every later read
+    of that row -- a 500 that only clears once the EA happens to push a
+    fresh update for that exact symbol/timeframe. Defaulting means old
+    or partial stored data degrades to 0s instead of ever crashing the
+    read."""
+
+    h4_poi: int = 0
+    m15_poi: int = 0
+    poi_alignment: int = 0
+    entry_target: int = 0
+    overall: int = 0
 
 
 class CoachExplanationResult(CamelModel):
