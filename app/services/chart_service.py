@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.chart import normalize
-from app.chart.candle_smc_engine import analyze_candles
+from app.chart.candle_smc_engine import Candle, analyze_candles
 from app.chart.coach_explainer import explain
-from app.chart.htf_ltf_ob_strategy import validate_h4_m15_ob
+from app.chart.personal_averaging_strategy import validate_personal_averaging
 from app.chart.multi_timeframe import confirm_with_m15
 from app.chart.trade_validator import _direction_from_bias, validate_trade
 from app.chart.vision_provider import VisionProviderError, get_vision_provider
@@ -24,24 +24,25 @@ from app.schemas.chart import ChartAnalysis
 
 _IMAGE_NOT_SUPPORTED_DETAIL = (
     "Screenshot analysis only sees one chart, so it can't check both the "
-    "H4 and M15 Point of Interest your strategy requires -- paste H4+M15 "
-    "candle data instead (Chart Analysis Engine's \"candles\" mode, Live "
-    "Feed, or the Scanner). Two-screenshot (H4 + M15) support isn't built yet."
+    "Daily bias and M15 Point of Interest your strategy requires -- paste "
+    "Daily+M15 candle data instead (Chart Analysis Engine's \"candles\" mode, "
+    "Live Feed, or the Scanner). Screenshot support for this strategy isn't built yet."
 )
 
 
 def _image_not_supported_validation() -> dict:
     """The screenshot-upload path can only read ONE chart, so it can
-    never check the H4 AND M15 Point of Interest the user's one
-    official strategy requires -- rather than silently falling back to
-    the retired Classic Bias validator (a second, disagreeing strategy
-    engine), this returns an honest WAIT with every rule marked
-    NOT_CHECKED and a clear explanation of why."""
+    never check the Daily bias AND M15 Point of Interest the user's one
+    official strategy (Sprint 18 -- Personal Averaging Strategy)
+    requires -- rather than silently falling back to a retired
+    validator (a second, disagreeing strategy engine), this returns an
+    honest WAIT with every rule marked NOT_CHECKED and a clear
+    explanation of why."""
     not_checked = [
-        {"rule": "H4 Order Block/FVG", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
+        {"rule": "Daily Bias", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
         {"rule": "M15 Order Block/FVG", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
-        {"rule": "POI Alignment", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
-        {"rule": "Entry / SL / TP", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
+        {"rule": "Entry Timing (near end of zone)", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
+        {"rule": "Add-On Entry (2nd position)", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
     ]
     return {
         "tradeStatus": "INVALID",
@@ -55,6 +56,10 @@ def _image_not_supported_validation() -> dict:
         "takeProfit": None,
         "riskReward": None,
         "recommendation": "WAIT",
+        "strategy": "Personal Averaging Strategy (Daily Bias + M15 POI, no fixed SL/TP)",
+        "dailyBias": None,
+        "addOnSignal": False,
+        "breakEvenPrice": None,
     }
 
 
@@ -86,6 +91,7 @@ class ChartService:
         self, candles: list[dict], *, direction: str | None, planned_rr: float | None,
         has_m15_bos: bool, has_m15_choch: bool, has_m15_entry_confirmation: bool,
         has_liquidity_sweep: bool, min_rr: float, m15_candles: list[dict] | None = None,
+        daily_candles: list[dict] | None = None, open_trade_in_loss: bool = False,
     ) -> dict[str, Any]:
         analysis_dict = await self.analyze_candles(candles)
         analysis = ChartAnalysis(**analysis_dict)
@@ -100,20 +106,22 @@ class ChartService:
             resolved_direction = direction or _direction_from_bias(analysis.bias) or "buy"
             multi_timeframe = confirm_with_m15(m15_analysis, resolved_direction)
 
-        # --- ACTIVE STRATEGY: H4 -> M15 Order Block (the user's own
-        # rules -- see app/chart/htf_ltf_ob_strategy.py for the exact
-        # touch/entry/SL/TP logic). Needs the RAW SmcAnalysis objects
-        # (order block coordinates, price_in_order_block), not the
+        # --- ACTIVE STRATEGY (Sprint 18): Personal Averaging Strategy
+        # (Daily Bias -> M15 POI -> Entry Timing -> Add-On Entry -- the
+        # user's own rules, see app/chart/personal_averaging_strategy.py
+        # for the exact logic and no-fixed-SL/TP rationale). Needs the
+        # RAW SmcAnalysis for M15 (order block coordinates), not the
         # normalized ChartAnalysis shape used above, so the candle math
         # is run a second time here -- cheap, pure function, no I/O.
         #
-        # The previous "Classic Bias" strategy (trend + premium/discount
-        # + BOS/CHOCH, min-R:R gate -- app/chart/trade_validator.py) is
-        # kept fully intact and untouched for later reuse; only this one
-        # line changed to swap which validator is active:
-        h4_smc = analyze_candles(candles)
+        # The retired H4->M15 POI engine (app/chart/htf_ltf_ob_strategy.py)
+        # and the even-older "Classic Bias" strategy
+        # (app/chart/trade_validator.py) are both kept fully intact and
+        # untouched for later reuse; only this block changed to swap
+        # which validator is active:
+        daily_smc_candles = [Candle(**c) for c in daily_candles] if daily_candles else []
         m15_smc = analyze_candles(m15_candles) if m15_candles else None
-        validation = validate_h4_m15_ob(h4_smc, m15_smc)
+        validation = validate_personal_averaging(daily_smc_candles, m15_smc, open_trade_in_loss=open_trade_in_loss)
 
         coach_result = self.coach(analysis, validation, min_rr)
         return {

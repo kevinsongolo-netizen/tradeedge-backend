@@ -2,7 +2,11 @@
 //|                                        TradeEdgeLiveFeed.mq5      |
 //|  Pushes recent candle data from this chart to your TradeEdge AI   |
 //|  backend, and sends a free MT5 mobile push notification whenever  |
-//|  the backend says a trade setup is VALID.                         |
+//|  the backend says a trade setup is VALID. Also pushes your account|
+//|  balance/equity/margin each tick (Sprint 18) so the website can   |
+//|  show a margin-call/stop-out buffer warning -- there is no fixed  |
+//|  stop loss in the Personal Averaging Strategy, so this is the     |
+//|  real safety net: it only WARNS, it never closes anything.        |
 //|                                                                    |
 //|  ONE-TIME SETUP:                                                   |
 //|  1. In MT5: Tools -> Options -> Expert Advisors -> check "Allow    |
@@ -37,6 +41,9 @@ input int    M15CandleCount      = 30;     // How many M15 candles to send (only
 input double MinRiskReward       = 2.0;    // Minimum R:R required for a VALID setup
 input int    PushIntervalSeconds = 60;     // How often to push fresh data to the backend
 input int    RepeatAlertMinutes  = 60;     // Don't repeat the same VALID phone alert more often than this
+input bool   PushMarginBuffer     = true;   // Also push account balance/equity/margin each tick (Sprint 18)
+input bool   IncludeDailyBias     = true;   // Also send Daily candles for the Personal Averaging Strategy's Daily Bias rule (Sprint 18)
+input int    DailyCandleCount     = 10;     // How many D1 candles to send (only used if the above is true)
 
 datetime lastNotifyTime = 0;
 string   lastNotifyStatus = "";
@@ -46,6 +53,8 @@ int OnInit()
 {
    EventSetTimer(PushIntervalSeconds);
    PushLiveData(); // push once immediately so the website has data right away
+   if(PushMarginBuffer)
+      PushAccountMargin();
    return(INIT_SUCCEEDED);
 }
 
@@ -57,6 +66,8 @@ void OnDeinit(const int reason)
 void OnTimer()
 {
    PushLiveData();
+   if(PushMarginBuffer)
+      PushAccountMargin();
 }
 
 //+------------------------------------------------------------------+
@@ -133,6 +144,30 @@ void HandlePlainResponse(string response)
 }
 
 //+------------------------------------------------------------------+
+//| Sprint 18 -- true if there's an open position on ``sym`` (any      |
+//| magic number, so it also catches manually-placed trades) that is   |
+//| currently floating in a loss. Feeds rule 3's add-on entry check    |
+//| automatically instead of needing a manual checkbox on the website. |
+//+------------------------------------------------------------------+
+bool HasOpenLosingPosition(string sym)
+{
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(!PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != sym)
+         continue;
+      if(PositionGetDouble(POSITION_PROFIT) < 0)
+         return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| Builds the request body and POSTs it to the backend               |
 //+------------------------------------------------------------------+
 void PushLiveData()
@@ -157,6 +192,13 @@ void PushLiveData()
       if(m15Json != "[]")
          body += "\"m15Candles\":" + m15Json + ",";
    }
+   if(IncludeDailyBias)
+   {
+      string dailyJson = CandlesToJsonArray(sym, PERIOD_D1, DailyCandleCount);
+      if(dailyJson != "[]")
+         body += "\"dailyCandles\":" + dailyJson + ",";
+   }
+   body += "\"openTradeInLoss\":" + (HasOpenLosingPosition(sym) ? "true" : "false") + ",";
    body += "\"minRr\":" + DoubleToString(MinRiskReward, 2);
    body += "}";
 
@@ -187,3 +229,47 @@ void PushLiveData()
    HandlePlainResponse(response);
 }
 //+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Sprint 18 -- pushes raw account balance/equity/margin so the      |
+//| website can show a margin-call/stop-out buffer warning. This EA   |
+//| never places trades or changes account settings -- it only reads  |
+//| account info and posts it, same as the candle push above.         |
+//+------------------------------------------------------------------+
+void PushAccountMargin()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
+   double margin  = AccountInfoDouble(ACCOUNT_MARGIN);
+
+   string body = "{";
+   body += "\"balance\":" + DoubleToString(balance, 2) + ",";
+   body += "\"equity\":" + DoubleToString(equity, 2) + ",";
+   body += "\"margin\":" + DoubleToString(margin, 2);
+   body += "}";
+
+   char postData[];
+   int dataLen = StringToCharArray(body, postData) - 1;
+   ArrayResize(postData, dataLen);
+
+   char result[];
+   string resultHeaders;
+   string headers = "Content-Type: application/json\r\n";
+   string url = BackendUrl + "/api/v1/account-margin/ingest?format=plain";
+
+   ResetLastError();
+   int status = WebRequest("POST", url, headers, 5000, postData, result, resultHeaders);
+
+   if(status == -1)
+   {
+      int err = GetLastError();
+      Print("TradeEdge Live Feed: margin push failed, error ", err,
+            ". Check Tools -> Options -> Expert Advisors -> 'Allow WebRequest for listed URL' includes: ", BackendUrl);
+      return;
+   }
+
+   string response = CharArrayToString(result);
+   string status_ = ExtractValue(response, "STATUS");
+   if(status_ == "DANGER")
+      Print("TradeEdge Live Feed: MARGIN BUFFER DANGER -- ", response);
+}

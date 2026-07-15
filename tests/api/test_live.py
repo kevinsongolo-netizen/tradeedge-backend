@@ -138,10 +138,10 @@ def test_latest_survives_old_shaped_stored_coach_confidence(client):
     body = resp.json()
     assert body["validation"]["ruleChecks"] == []
     breakdown = body["coach"]["confidence"]
-    assert breakdown["h4Poi"] == 0
+    assert breakdown["dailyBias"] == 0
     assert breakdown["m15Poi"] == 0
-    assert breakdown["poiAlignment"] == 0
-    assert breakdown["entryTarget"] == 0
+    assert breakdown["entryTiming"] == 0
+    assert breakdown["addOn"] == 0
     # "overall" wasn't renamed between old and new shapes, so the old
     # stored value survives untouched -- only the truly-renamed fields
     # fall back to their 0 default.

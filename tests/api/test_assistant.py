@@ -1,13 +1,14 @@
 """Assistant API tests — ``POST /api/v1/assistant/pretrade-analysis``.
 
-v2 — rebuilt for the rebuilt Pre-Trade Check: it now takes real H4+M15
-candles (same shape as Chart Analysis Engine) and runs the ONE
-official H4->M15 POI strategy instead of a manual BOS/CHOCH/trend
-checklist. ``validate_h4_m15_ob`` is monkeypatched (same strategy
-``tests/backtest/test_h4_m15_backtest_engine.py`` uses) so these tests
-control VALID vs. WAIT deterministically without hand-constructing
-real market structure -- the candle arrays only need to be long enough
-to satisfy ``analyze_candles``'s own minimum-length check.
+v3 (Sprint 18) — rebuilt for the Personal Averaging Strategy: it now
+takes Daily+M15 candles (same shape as Chart Analysis Engine) and runs
+the ONE official Personal Averaging Strategy instead of the retired
+H4->M15 POI engine. ``validate_personal_averaging`` is monkeypatched
+(same strategy ``tests/backtest/test_personal_averaging_backtest_engine.py``
+uses) so these tests control VALID/ADD vs. WAIT deterministically
+without hand-constructing real market structure -- the candle arrays
+only need to be long enough to satisfy ``analyze_candles``'s own
+minimum-length check.
 """
 import random
 
@@ -27,7 +28,7 @@ _REQUEST = {
     "pair": "EURUSD",
     "asset": "Forex",
     "session": "London",
-    "h4Candles": _CANDLES_PAYLOAD,
+    "dailyCandles": _CANDLES_PAYLOAD,
     "m15Candles": _CANDLES_PAYLOAD,
 }
 
@@ -37,19 +38,23 @@ def _fake_valid(**overrides):
         "tradeStatus": "VALID",
         "direction": "buy",
         "confidence": 100,
-        "reasonsPassed": ["✓ Price touched an H4 Bullish Order Block (1.09000-1.09500)"],
+        "reasonsPassed": ["Daily candle is Bullish -- only BUY setups apply today"],
         "reasonsFailed": [],
         "ruleChecks": [
-            {"rule": "H4 Order Block/FVG", "status": "PASSED", "detail": "touched"},
+            {"rule": "Daily Bias", "status": "PASSED", "detail": "bullish"},
             {"rule": "M15 Order Block/FVG", "status": "PASSED", "detail": "touched"},
-            {"rule": "POI Alignment", "status": "PASSED", "detail": "aligned"},
-            {"rule": "Entry / SL / TP", "status": "PASSED", "detail": "target found"},
+            {"rule": "Entry Timing (near end of zone)", "status": "PASSED", "detail": "near end"},
+            {"rule": "Add-On Entry (2nd position)", "status": "NOT_CHECKED", "detail": "n/a"},
         ],
         "suggestedEntry": 1.1000,
-        "stopLoss": 1.0950,
-        "takeProfit": 1.1150,
-        "riskReward": 3.0,
+        "stopLoss": None,
+        "takeProfit": None,
+        "riskReward": None,
         "recommendation": "TAKE",
+        "strategy": "Personal Averaging Strategy (Daily Bias + M15 POI, no fixed SL/TP)",
+        "dailyBias": "BUY",
+        "addOnSignal": False,
+        "breakEvenPrice": None,
     }
     result.update(overrides)
     return result
@@ -61,18 +66,22 @@ def _fake_wait():
         "direction": None,
         "confidence": 0,
         "reasonsPassed": [],
-        "reasonsFailed": ["✗ Price has not touched or reacted from a valid H4 Order Block or Fair Value Gap"],
+        "reasonsFailed": ["No daily candle supplied -- can't determine daily bias"],
         "ruleChecks": [
-            {"rule": "H4 Order Block/FVG", "status": "FAILED", "detail": "not touched"},
+            {"rule": "Daily Bias", "status": "FAILED", "detail": "no daily candle"},
             {"rule": "M15 Order Block/FVG", "status": "NOT_CHECKED", "detail": "n/a"},
-            {"rule": "POI Alignment", "status": "NOT_CHECKED", "detail": "n/a"},
-            {"rule": "Entry / SL / TP", "status": "NOT_CHECKED", "detail": "n/a"},
+            {"rule": "Entry Timing (near end of zone)", "status": "NOT_CHECKED", "detail": "n/a"},
+            {"rule": "Add-On Entry (2nd position)", "status": "NOT_CHECKED", "detail": "n/a"},
         ],
         "suggestedEntry": None,
         "stopLoss": None,
         "takeProfit": None,
         "riskReward": None,
         "recommendation": "WAIT",
+        "strategy": "Personal Averaging Strategy (Daily Bias + M15 POI, no fixed SL/TP)",
+        "dailyBias": None,
+        "addOnSignal": False,
+        "breakEvenPrice": None,
     }
 
 
@@ -116,7 +125,7 @@ def test_pretrade_wait_skips_ml_and_history_entirely(client, monkeypatch):
     never even queried -- the strategy's own decision is the only
     thing that matters, and nothing computes a probability for a setup
     that doesn't qualify."""
-    monkeypatch.setattr(assistant_service, "validate_h4_m15_ob", lambda h4, m15: _fake_wait())
+    monkeypatch.setattr(assistant_service, "validate_personal_averaging", lambda daily, m15, open_trade_in_loss=False: _fake_wait())
     resp = client.post("/api/v1/assistant/pretrade-analysis", json=_REQUEST)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -124,7 +133,7 @@ def test_pretrade_wait_skips_ml_and_history_entirely(client, monkeypatch):
     assert body["recommendation"] == "WAIT"
     assert body["direction"] is None
     assert len(body["ruleChecks"]) == 4
-    assert body["ruleChecks"][0]["rule"] == "H4 Order Block/FVG"
+    assert body["ruleChecks"][0]["rule"] == "Daily Bias"
     assert body["ruleChecks"][0]["status"] == "FAILED"
     assert body["mlAvailable"] is False
     assert body["winProbability"] is None
@@ -135,7 +144,7 @@ def test_pretrade_valid_before_any_model_trained(client, monkeypatch):
     """Must be useful on day one — before ``/ml/train`` has ever been
     called, a VALID setup still gets a rule/history-based estimate
     rather than an error."""
-    monkeypatch.setattr(assistant_service, "validate_h4_m15_ob", lambda h4, m15: _fake_valid())
+    monkeypatch.setattr(assistant_service, "validate_personal_averaging", lambda daily, m15, open_trade_in_loss=False: _fake_valid())
     resp = client.post("/api/v1/assistant/pretrade-analysis", json=_REQUEST)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -143,6 +152,8 @@ def test_pretrade_valid_before_any_model_trained(client, monkeypatch):
     assert body["recommendation"] == "TAKE"
     assert body["direction"] == "buy"
     assert body["suggestedEntry"] == 1.1000
+    assert body["dailyBias"] == "BUY"
+    assert body["addOnSignal"] is False
     assert body["mlAvailable"] is False
     assert body["mlRecommendation"] in ("Strong Buy", "Buy", "Wait", "Avoid")
     assert body["mlRecommendation"] != "Strong Buy"  # never Strong Buy at Low confidence
@@ -152,8 +163,25 @@ def test_pretrade_valid_before_any_model_trained(client, monkeypatch):
     assert not any("BOS" in s or "CHOCH" in s for s in body["strengths"] + body["weaknesses"])
 
 
+def test_pretrade_add_on_signal_flows_through(client, monkeypatch):
+    monkeypatch.setattr(
+        assistant_service,
+        "validate_personal_averaging",
+        lambda daily, m15, open_trade_in_loss=False: _fake_valid(recommendation="ADD", addOnSignal=True),
+    )
+    resp = client.post(
+        "/api/v1/assistant/pretrade-analysis",
+        json={**_REQUEST, "openTradeInLoss": True},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["tradeStatus"] == "VALID"
+    assert body["recommendation"] == "ADD"
+    assert body["addOnSignal"] is True
+
+
 def test_pretrade_valid_after_training_uses_ml(client, monkeypatch):
-    monkeypatch.setattr(assistant_service, "validate_h4_m15_ob", lambda h4, m15: _fake_valid())
+    monkeypatch.setattr(assistant_service, "validate_personal_averaging", lambda daily, m15, open_trade_in_loss=False: _fake_valid())
     _seed_trades(client)
     train_resp = client.post("/api/v1/ml/train", json={})
     assert train_resp.status_code == 200, train_resp.text
@@ -184,6 +212,13 @@ def test_pretrade_analysis_missing_m15_candles_is_422(client):
     assert resp.status_code == 422
 
 
+def test_pretrade_analysis_missing_daily_candles_is_422(client):
+    body = {**_REQUEST}
+    del body["dailyCandles"]
+    resp = client.post("/api/v1/assistant/pretrade-analysis", json=body)
+    assert resp.status_code == 422
+
+
 # ---------- Live Feed path (no candle paste needed) ----------
 
 import app.services.chart_service as chart_service  # noqa: E402
@@ -191,12 +226,13 @@ import app.services.chart_service as chart_service  # noqa: E402
 
 def _seed_live_snapshot(client, symbol, timeframe, validation):
     """Seeds a live_snapshots row via the real ingest endpoint, with
-    validate_h4_m15_ob patched (same monkeypatch strategy used above)
-    so we control VALID vs WAIT without needing real market structure."""
+    validate_personal_averaging patched (same monkeypatch strategy used
+    above) so we control VALID vs WAIT without needing real market
+    structure."""
     import app.services.chart_service as cs
 
-    orig = cs.validate_h4_m15_ob
-    cs.validate_h4_m15_ob = lambda h4, m15: validation
+    orig = cs.validate_personal_averaging
+    cs.validate_personal_averaging = lambda daily, m15, open_trade_in_loss=False: validation
     try:
         resp = client.post(
             "/api/v1/live/ingest",
@@ -204,7 +240,7 @@ def _seed_live_snapshot(client, symbol, timeframe, validation):
         )
         assert resp.status_code == 200, resp.text
     finally:
-        cs.validate_h4_m15_ob = orig
+        cs.validate_personal_averaging = orig
 
 
 def test_pretrade_live_no_data_yet_is_404(client):

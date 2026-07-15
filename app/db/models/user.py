@@ -18,6 +18,7 @@ from sqlalchemy.sql import func
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.db.models.account_margin import AccountMargin
     from app.db.models.ai_analysis import AIAnalysis
     from app.db.models.live_snapshot import LiveSnapshot
     from app.db.models.ml_export import MLExport, MLModel
@@ -61,6 +62,9 @@ class User(Base):
     )
     live_snapshots: Mapped[list["LiveSnapshot"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    account_margin: Mapped["AccountMargin | None"] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper

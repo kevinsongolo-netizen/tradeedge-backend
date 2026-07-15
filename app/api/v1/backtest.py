@@ -23,11 +23,15 @@ async def run_backtest(body: BacktestRequest) -> BacktestResult:
     service = BacktestService()
     candles = [c.model_dump(by_alias=False) for c in body.candles]
     m15_candles = [c.model_dump(by_alias=False) for c in body.m15_candles] if body.m15_candles else None
+    daily_candles = [c.model_dump(by_alias=False) for c in body.daily_candles] if body.daily_candles else None
     result = service.run(
         candles,
         m15_candles=m15_candles,
+        daily_candles=daily_candles,
         lookback_window=body.lookback_window,
         lookback_window_m15=body.lookback_window_m15,
+        lookback_window_daily=body.lookback_window_daily,
+        target_net_profit_per_unit=body.target_net_profit_per_unit,
         min_rr=body.min_rr,
         direction=body.direction,
     )

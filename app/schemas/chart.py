@@ -108,29 +108,38 @@ class TradeValidationResult(CamelModel):
     stop_loss: float | None = None
     take_profit: float | None = None
     risk_reward: float | None = None
-    recommendation: str  # "TAKE" | "WAIT"
+    recommendation: str  # "TAKE" | "ADD" | "WAIT"
+
+    # Sprint 18 -- Personal Averaging Strategy. These stay None/False
+    # for any result produced by a strategy that doesn't use them (e.g.
+    # the H4->M15 POI engine), so they're purely additive and don't
+    # break existing callers or persisted rows.
+    strategy: str | None = None
+    daily_bias: str | None = None  # "BUY" | "SELL" | None
+    add_on_signal: bool = False  # True when it's time to place the 2nd, same-size entry
+    break_even_price: float | None = None  # price at which open entries net to ~0
 
 
 class ConfidenceBreakdown(CamelModel):
-    """Mirrors the ONE official strategy's own rule funnel (see
-    ``app.chart.htf_ltf_ob_strategy``) -- each step is 100 if it
-    passed, 0 if it failed or was never reached, so there is no
-    second, independent quality score competing with the actual
-    trade-validity decision.
+    """Mirrors the ONE official strategy's own rule funnel (Sprint 18 --
+    ``app.chart.personal_averaging_strategy``: Daily Bias / M15 POI /
+    Entry Timing / Add-On Entry) -- each step is 100 if it passed, 0 if
+    it failed or was never reached, so there is no second, independent
+    quality score competing with the actual trade-validity decision.
 
     All fields default to 0 rather than being required: ``live_snapshots``
-    rows persist this dict as raw JSON, so anything ingested before this
-    schema changed field names (the old trendAlignment/poiQuality/...
-    shape) would otherwise fail Pydantic validation on every later read
-    of that row -- a 500 that only clears once the EA happens to push a
-    fresh update for that exact symbol/timeframe. Defaulting means old
-    or partial stored data degrades to 0s instead of ever crashing the
-    read."""
+    rows persist this dict as raw JSON, so anything ingested before a
+    field rename (the old h4Poi/m15Poi/poiAlignment/entryTarget shape,
+    itself a replacement for an even older shape) would otherwise fail
+    Pydantic validation on every later read of that row -- a 500 that
+    only clears once the EA happens to push a fresh update for that
+    exact symbol/timeframe. Defaulting means old or partial stored data
+    degrades to 0s instead of ever crashing the read."""
 
-    h4_poi: int = 0
+    daily_bias: int = 0
     m15_poi: int = 0
-    poi_alignment: int = 0
-    entry_target: int = 0
+    entry_timing: int = 0
+    add_on: int = 0
     overall: int = 0
 
 
@@ -176,6 +185,24 @@ class FullCandlesAnalysisRequest(CamelModel):
             "confirmation. When supplied, has_m15_bos/has_m15_choch/"
             "has_m15_entry_confirmation are derived from real M15 structure "
             "and OR'd with the manual flags below rather than replacing them."
+        ),
+    )
+    daily_candles: list[CandleIn] | None = Field(
+        default=None,
+        description=(
+            "Sprint 18 — Personal Averaging Strategy's Daily Bias check "
+            "(Step 1: bullish daily candle = BUY setups only, bearish = "
+            "SELL only). Required for a VALID/TAKE result under the active "
+            "strategy; omit only if you just want the Level-1 read/display."
+        ),
+    )
+    open_trade_in_loss: bool = Field(
+        default=False,
+        description=(
+            "Sprint 18 — set True when you already have a first position "
+            "open on this pair and it's currently floating in a loss, so "
+            "the strategy can check for rule 3's 2nd, same-size add-on "
+            "entry instead of a fresh first entry."
         ),
     )
     direction: str | None = None

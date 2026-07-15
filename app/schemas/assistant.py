@@ -21,8 +21,9 @@ class PreTradeAnalysisRequest(CamelModel):
     pair: str
     asset: str | None = None
     session: str | None = None
-    h4_candles: list[CandleIn] = Field(min_length=1)
+    daily_candles: list[CandleIn] = Field(min_length=1)  # Sprint 18 -- Daily Bias (rule 1)
     m15_candles: list[CandleIn] = Field(min_length=1)
+    open_trade_in_loss: bool = False  # Sprint 18 -- fires the 2nd, same-size add-on entry check
 
 
 class PreTradeFromLiveRequest(CamelModel):
@@ -51,7 +52,11 @@ class PreTradeAnalysisResult(CamelModel):
     stop_loss: float | None = None
     take_profit: float | None = None
     risk_reward: float | None = None
-    recommendation: str  # "TAKE" | "WAIT" -- the strategy's own call
+    recommendation: str  # "TAKE" | "ADD" | "WAIT" -- the strategy's own call
+    strategy: str | None = None
+    daily_bias: str | None = None
+    add_on_signal: bool = False
+    break_even_price: float | None = None
 
     # --- supplementary ML/historical context only, shown separately ---
     trade_quality_score: float | None = None

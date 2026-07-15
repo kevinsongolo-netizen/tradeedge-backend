@@ -64,10 +64,10 @@ def test_full_analysis_image_returns_explicit_wait_not_classic_bias(client):
     assert body["validation"]["confidence"] == 0
     rule_statuses = {c["rule"]: c["status"] for c in body["validation"]["ruleChecks"]}
     assert rule_statuses == {
-        "H4 Order Block/FVG": "NOT_CHECKED",
+        "Daily Bias": "NOT_CHECKED",
         "M15 Order Block/FVG": "NOT_CHECKED",
-        "POI Alignment": "NOT_CHECKED",
-        "Entry / SL / TP": "NOT_CHECKED",
+        "Entry Timing (near end of zone)": "NOT_CHECKED",
+        "Add-On Entry (2nd position)": "NOT_CHECKED",
     }
     assert "one chart" in body["validation"]["reasonsFailed"][0]
     assert body["coach"]["headline"] == "WAIT"

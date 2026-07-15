@@ -185,17 +185,17 @@ def explain_trade_from_strategy(
 ) -> dict[str, list[str]]:
     """v2 Phase 7, for the rebuilt Pre-Trade Check (only ever called
     once the ONE official strategy has already said VALID -- see
-    ``app.chart.htf_ltf_ob_strategy``). Deliberately does NOT comment
-    on trend/BOS/CHOCH/liquidity-sweep the way the old ``explain_trade``
-    did: the active strategy doesn't use any of those, so fabricating
-    "No BOS confirmation"-style weaknesses about rules that don't gate
-    anything would be misleading noise, not real signal. Only comments
-    on what ML/history can actually speak to."""
+    ``app.chart.personal_averaging_strategy``, Sprint 18). Deliberately
+    does NOT comment on trend/BOS/CHOCH/liquidity-sweep the way the old
+    ``explain_trade`` did: the active strategy doesn't use any of
+    those, so fabricating "No BOS confirmation"-style weaknesses about
+    rules that don't gate anything would be misleading noise, not real
+    signal. Only comments on what ML/history can actually speak to."""
     strengths: list[str] = []
     weaknesses: list[str] = []
 
     strengths.append(
-        "H4 and M15 Point of Interest touched and aligned -- every rule in your official strategy passed"
+        "Daily Bias, M15 Point of Interest, and Entry Timing all passed -- every rule in your official strategy passed"
     )
 
     if planned_rr is not None:
@@ -212,7 +212,7 @@ def explain_trade_from_strategy(
             weaknesses.append(f"R:R ({planned_rr:.1f}) is on the low side")
 
     if confidence is not None and confidence >= 100:
-        strengths.append("Full confidence -- entry, stop loss, and take profit all resolved from real market structure")
+        strengths.append("Full confidence -- every step of your strategy's checklist passed with no ambiguity")
 
     return {"strengths": strengths, "weaknesses": weaknesses}
 

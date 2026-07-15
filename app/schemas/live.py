@@ -24,6 +24,8 @@ class LiveIngestRequest(CamelModel):
     timeframe: str
     candles: list[CandleIn] = Field(min_length=1)
     m15_candles: list[CandleIn] | None = None
+    daily_candles: list[CandleIn] | None = None  # Sprint 18 -- Personal Averaging Strategy's Daily Bias
+    open_trade_in_loss: bool = False  # Sprint 18 -- fires the 2nd, same-size add-on entry check
     direction: str | None = None
     planned_rr: float | None = None
     has_m15_bos: bool = False

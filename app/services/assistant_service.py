@@ -18,8 +18,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.chart.candle_smc_engine import analyze_candles
-from app.chart.htf_ltf_ob_strategy import validate_h4_m15_ob
+from app.chart.candle_smc_engine import Candle, analyze_candles
+from app.chart.personal_averaging_strategy import validate_personal_averaging
 from app.db.repositories.live_snapshot_repo import LiveSnapshotRepository
 from app.engines.assistant_engine import analyze_pretrade_from_strategy
 from app.errors import NotFoundError, ValidationError
@@ -58,6 +58,10 @@ def _validation_base(validation: dict[str, Any]) -> dict[str, Any]:
         "take_profit": validation["takeProfit"],
         "risk_reward": validation["riskReward"],
         "recommendation": validation["recommendation"],
+        "strategy": validation.get("strategy"),
+        "daily_bias": validation.get("dailyBias"),
+        "add_on_signal": validation.get("addOnSignal", False),
+        "break_even_price": validation.get("breakEvenPrice"),
     }
 
 
@@ -127,16 +131,17 @@ class AssistantService:
         pair: str,
         asset: str | None,
         session_name: str | None,
-        h4_candles: list[dict],
+        daily_candles: list[dict],
         m15_candles: list[dict],
+        open_trade_in_loss: bool = False,
     ) -> dict[str, Any]:
         try:
-            h4_smc = analyze_candles(h4_candles)
+            daily = [Candle(**c) for c in daily_candles]
             m15_smc = analyze_candles(m15_candles)
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
 
-        validation = validate_h4_m15_ob(h4_smc, m15_smc)
+        validation = validate_personal_averaging(daily, m15_smc, open_trade_in_loss=open_trade_in_loss)
         return await self._finish(user_id, pair=pair, asset=asset, session_name=session_name, validation=validation)
 
     async def analyze_pretrade_live(

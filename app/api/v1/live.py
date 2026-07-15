@@ -62,6 +62,9 @@ async def ingest(
     m15_candles = (
         [c.model_dump(by_alias=False) for c in body.m15_candles] if body.m15_candles else None
     )
+    daily_candles = (
+        [c.model_dump(by_alias=False) for c in body.daily_candles] if body.daily_candles else None
+    )
     result = await service.ingest(
         user_id,
         body.symbol,
@@ -75,6 +78,8 @@ async def ingest(
         has_liquidity_sweep=body.has_liquidity_sweep,
         min_rr=body.min_rr,
         m15_candles=m15_candles,
+        daily_candles=daily_candles,
+        open_trade_in_loss=body.open_trade_in_loss,
     )
     if format == "plain":
         return PlainTextResponse(_format_plain(result))

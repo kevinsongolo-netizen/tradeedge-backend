@@ -45,8 +45,9 @@ async def pretrade_analysis(
         pair=body.pair,
         asset=body.asset,
         session_name=body.session,
-        h4_candles=[c.model_dump(by_alias=False) for c in body.h4_candles],
+        daily_candles=[c.model_dump(by_alias=False) for c in body.daily_candles],
         m15_candles=[c.model_dump(by_alias=False) for c in body.m15_candles],
+        open_trade_in_loss=body.open_trade_in_loss,
     )
     return PreTradeAnalysisResult(**result)
 
