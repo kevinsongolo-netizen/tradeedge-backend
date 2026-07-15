@@ -13,9 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
 from app.deps import get_current_user_id
+from app.errors import ValidationError
 from app.schemas.trade import (
     BulkTradeIn,
     BulkTradeResult,
+    DeleteAllTradesResult,
     TradeIn,
     TradeListResponse,
     TradeOut,
@@ -104,6 +106,34 @@ async def delete_trade(
 ) -> None:
     service = TradeService(session)
     await service.delete_trade(user_id, trade_id)
+
+
+_DELETE_ALL_CONFIRM_PHRASE = "DELETE ALL MY TRADES"
+
+
+@router.delete(
+    "",
+    response_model=DeleteAllTradesResult,
+    summary="Sprint 18 -- bulk-clear the whole trade journal (e.g. starting fresh on a new account)",
+)
+async def delete_all_trades(
+    confirm: str = Query(
+        default="",
+        description=f'Must be exactly "{_DELETE_ALL_CONFIRM_PHRASE}" -- a deliberate safety check '
+        "since this permanently deletes every trade in the journal and cannot be undone.",
+    ),
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> DeleteAllTradesResult:
+    if confirm != _DELETE_ALL_CONFIRM_PHRASE:
+        raise ValidationError(
+            f'To bulk-delete every trade in your journal, resend this request with '
+            f'?confirm={_DELETE_ALL_CONFIRM_PHRASE.replace(" ", "%20")} -- this is deliberately '
+            "not the default so it can never happen by accident."
+        )
+    service = TradeService(session)
+    deleted_count = await service.delete_all_trades(user_id)
+    return DeleteAllTradesResult(deleted_count=deleted_count)
 
 
 @router.post("/bulk", response_model=BulkTradeResult, summary="Bulk upsert (migration script)")

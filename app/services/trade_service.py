@@ -149,6 +149,15 @@ class TradeService:
         await self._invalidate_caches(user_id)
         await self.session.commit()
 
+    async def delete_all_trades(self, user_id: int) -> int:
+        """Sprint 18 -- bulk-clears the whole journal (e.g. starting
+        fresh on a new MT5 account, per the user's own explicit
+        request). Returns how many trades were removed."""
+        count = await self.trade_repo.delete_all(user_id)
+        await self._invalidate_caches(user_id)
+        await self.session.commit()
+        return count
+
     async def bulk_upsert(self, user_id: int, items: list[dict[str, Any]]) -> dict[str, Any]:
         """bulk_upsert(user_id, items) — used by ``POST /trades/bulk``
         and the localStorage migration script. Each trade is analyzed

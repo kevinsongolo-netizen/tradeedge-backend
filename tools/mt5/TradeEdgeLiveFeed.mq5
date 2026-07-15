@@ -270,6 +270,7 @@ void PushAccountMargin()
 
    string response = CharArrayToString(result);
    string status_ = ExtractValue(response, "STATUS");
+   Print("TradeEdge Live Feed: margin push OK (HTTP ", status, "), status=", status_, ". Response: ", response);
    if(status_ == "DANGER")
       Print("TradeEdge Live Feed: MARGIN BUFFER DANGER -- ", response);
 }

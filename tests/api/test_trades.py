@@ -195,3 +195,38 @@ def test_open_trade_has_null_execution_score(client):
     body = resp.json()
     assert body["executionScore"] is None
     assert body["overallScore"] == body["ruleScore"]
+
+
+# ---------- Sprint 18: bulk-clear the whole journal ----------
+
+def test_delete_all_without_confirm_phrase_is_422(client):
+    client.post("/api/v1/trades", json=SAMPLE)
+    resp = client.delete("/api/v1/trades")
+    assert resp.status_code == 422
+    assert client.get("/api/v1/trades/trade-1").status_code == 200
+
+
+def test_delete_all_with_wrong_confirm_phrase_is_422(client):
+    client.post("/api/v1/trades", json=SAMPLE)
+    resp = client.delete("/api/v1/trades", params={"confirm": "yes please"})
+    assert resp.status_code == 422
+    assert client.get("/api/v1/trades/trade-1").status_code == 200
+
+
+def test_delete_all_with_correct_confirm_phrase_clears_everything(client):
+    items = [{**SAMPLE, "id": f"bulk-{i}", "date": f"2026-02-0{i+1}"} for i in range(3)]
+    client.post("/api/v1/trades/bulk", json={"items": items})
+    client.post("/api/v1/trades", json=SAMPLE)
+
+    resp = client.delete("/api/v1/trades", params={"confirm": "DELETE ALL MY TRADES"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deletedCount"] == 4
+
+    listing = client.get("/api/v1/trades").json()
+    assert listing["items"] == []
+
+
+def test_delete_all_on_empty_journal_returns_zero(client):
+    resp = client.delete("/api/v1/trades", params={"confirm": "DELETE ALL MY TRADES"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deletedCount"] == 0

@@ -148,3 +148,11 @@ class BulkTradeResult(CamelModel):
     inserted: int
     updated: int
     failed: list[BulkFailure] = Field(default_factory=list)
+
+
+class DeleteAllTradesResult(CamelModel):
+    """Sprint 18 -- response for the bulk 'clear all trades' action
+    (e.g. starting fresh on a new MT5 account, per the user's own
+    request)."""
+
+    deleted_count: int

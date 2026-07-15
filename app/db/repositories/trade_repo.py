@@ -178,6 +178,21 @@ class TradeRepository:
         await self.session.flush()
         return True
 
+    async def delete_all(self, user_id: int) -> int:
+        """Sprint 18 -- bulk-deletes every trade for this user (e.g.
+        starting fresh on a new MT5 account). Returns the count
+        deleted so the caller can confirm back to the user exactly how
+        many rows were removed."""
+        result = await self.session.execute(
+            select(Trade).where(Trade.user_id == user_id)
+        )
+        trades = result.scalars().all()
+        count = len(trades)
+        for trade in trades:
+            await self.session.delete(trade)
+        await self.session.flush()
+        return count
+
     async def max_updated_at(self, user_id: int) -> str | None:
         """Latest ``updated_at`` across a user's trades, used to build
         the stats/coach cache fingerprint (Section 5.3)."""
