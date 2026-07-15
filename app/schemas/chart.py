@@ -86,12 +86,24 @@ class TradeValidationRequest(CamelModel):
     min_rr: float = 2.0
 
 
+class RuleCheck(CamelModel):
+    """One step of the ONE official strategy's decision funnel (H4
+    POI / M15 POI / POI Alignment / Entry & Target) -- lets the UI
+    show exactly which rule passed, failed, or was never reached,
+    instead of a single pass/fail flag."""
+
+    rule: str
+    status: str  # "PASSED" | "FAILED" | "NOT_CHECKED"
+    detail: str
+
+
 class TradeValidationResult(CamelModel):
     trade_status: str  # "VALID" | "INVALID"
     direction: str | None
     confidence: int
     reasons_passed: list[str] = Field(default_factory=list)
     reasons_failed: list[str] = Field(default_factory=list)
+    rule_checks: list[RuleCheck] = Field(default_factory=list)
     suggested_entry: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
@@ -100,13 +112,16 @@ class TradeValidationResult(CamelModel):
 
 
 class ConfidenceBreakdown(CamelModel):
-    trend_alignment: int
-    poi_quality: int
-    liquidity_quality: int
-    bos_quality: int
-    choch_quality: int
-    fvg_quality: int
-    rr_quality: int
+    """Mirrors the ONE official strategy's own rule funnel (see
+    ``app.chart.htf_ltf_ob_strategy``) -- each step is 100 if it
+    passed, 0 if it failed or was never reached, so there is no
+    second, independent quality score competing with the actual
+    trade-validity decision."""
+
+    h4_poi: int
+    m15_poi: int
+    poi_alignment: int
+    entry_target: int
     overall: int
 
 

@@ -49,6 +49,30 @@ def test_analyze_image_rejects_unsupported_content_type(client):
     assert resp.status_code == 422, resp.text
 
 
+def test_full_analysis_image_returns_explicit_wait_not_classic_bias(client):
+    """The screenshot path only ever sees ONE chart, so it can't run
+    the dual-timeframe H4->M15 strategy -- it must return an honest,
+    clearly-explained WAIT rather than silently falling back to the
+    retired Classic Bias validator (which would make this the one
+    place in the app running a second, different strategy)."""
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["validation"]["tradeStatus"] == "INVALID"
+    assert body["validation"]["recommendation"] == "WAIT"
+    assert body["validation"]["confidence"] == 0
+    rule_statuses = {c["rule"]: c["status"] for c in body["validation"]["ruleChecks"]}
+    assert rule_statuses == {
+        "H4 Order Block/FVG": "NOT_CHECKED",
+        "M15 Order Block/FVG": "NOT_CHECKED",
+        "POI Alignment": "NOT_CHECKED",
+        "Entry / SL / TP": "NOT_CHECKED",
+    }
+    assert "one chart" in body["validation"]["reasonsFailed"][0]
+    assert body["coach"]["headline"] == "WAIT"
+
+
 def test_full_analysis_candles_end_to_end(client):
     resp = client.post(
         "/api/v1/chart/full-analysis/candles",
@@ -58,7 +82,7 @@ def test_full_analysis_candles_end_to_end(client):
     body = resp.json()
     assert body["analysis"]["trend"] == "Bullish"
     assert body["validation"]["tradeStatus"] in ("VALID", "INVALID")
-    assert body["coach"]["headline"] in ("BUY ANALYSIS", "SELL ANALYSIS", "NO TRADE")
+    assert body["coach"]["headline"] in ("BUY ANALYSIS", "SELL ANALYSIS", "WAIT")
     assert 0 <= body["coach"]["confidence"]["overall"] <= 100
 
 
@@ -81,5 +105,5 @@ def test_coach_endpoint_standalone(client):
     resp = client.post("/api/v1/chart/coach", json={"analysis": analysis, "validation": validation})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["headline"] in ("BUY ANALYSIS", "SELL ANALYSIS", "NO TRADE")
+    assert body["headline"] in ("BUY ANALYSIS", "SELL ANALYSIS", "WAIT")
     assert len(body["explanation"]) >= 1

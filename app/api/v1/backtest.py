@@ -22,9 +22,12 @@ router = APIRouter(prefix="/backtest", tags=["backtest"])
 async def run_backtest(body: BacktestRequest) -> BacktestResult:
     service = BacktestService()
     candles = [c.model_dump(by_alias=False) for c in body.candles]
+    m15_candles = [c.model_dump(by_alias=False) for c in body.m15_candles] if body.m15_candles else None
     result = service.run(
         candles,
+        m15_candles=m15_candles,
         lookback_window=body.lookback_window,
+        lookback_window_m15=body.lookback_window_m15,
         min_rr=body.min_rr,
         direction=body.direction,
     )

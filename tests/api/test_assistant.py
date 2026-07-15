@@ -1,9 +1,79 @@
-"""Assistant API tests — ``POST /api/v1/assistant/pretrade-analysis``
-(Sprint 8 Phases 5 & 7)."""
+"""Assistant API tests — ``POST /api/v1/assistant/pretrade-analysis``.
+
+v2 — rebuilt for the rebuilt Pre-Trade Check: it now takes real H4+M15
+candles (same shape as Chart Analysis Engine) and runs the ONE
+official H4->M15 POI strategy instead of a manual BOS/CHOCH/trend
+checklist. ``validate_h4_m15_ob`` is monkeypatched (same strategy
+``tests/backtest/test_h4_m15_backtest_engine.py`` uses) so these tests
+control VALID vs. WAIT deterministically without hand-constructing
+real market structure -- the candle arrays only need to be long enough
+to satisfy ``analyze_candles``'s own minimum-length check.
+"""
 import random
+
+import app.services.assistant_service as assistant_service
+
+from tests.chart.test_candle_smc_engine import _BULLISH_ROWS
 
 PAIRS = ["EURUSD", "GBPUSD", "XAUUSD"]
 SESSIONS = ["London", "New York", "Asian"]
+
+_CANDLES_PAYLOAD = [
+    {"time": str(i), "open": o, "high": h, "low": l, "close": c}
+    for i, (o, h, l, c) in enumerate(_BULLISH_ROWS)
+]
+
+_REQUEST = {
+    "pair": "EURUSD",
+    "asset": "Forex",
+    "session": "London",
+    "h4Candles": _CANDLES_PAYLOAD,
+    "m15Candles": _CANDLES_PAYLOAD,
+}
+
+
+def _fake_valid(**overrides):
+    result = {
+        "tradeStatus": "VALID",
+        "direction": "buy",
+        "confidence": 100,
+        "reasonsPassed": ["✓ Price touched an H4 Bullish Order Block (1.09000-1.09500)"],
+        "reasonsFailed": [],
+        "ruleChecks": [
+            {"rule": "H4 Order Block/FVG", "status": "PASSED", "detail": "touched"},
+            {"rule": "M15 Order Block/FVG", "status": "PASSED", "detail": "touched"},
+            {"rule": "POI Alignment", "status": "PASSED", "detail": "aligned"},
+            {"rule": "Entry / SL / TP", "status": "PASSED", "detail": "target found"},
+        ],
+        "suggestedEntry": 1.1000,
+        "stopLoss": 1.0950,
+        "takeProfit": 1.1150,
+        "riskReward": 3.0,
+        "recommendation": "TAKE",
+    }
+    result.update(overrides)
+    return result
+
+
+def _fake_wait():
+    return {
+        "tradeStatus": "INVALID",
+        "direction": None,
+        "confidence": 0,
+        "reasonsPassed": [],
+        "reasonsFailed": ["✗ Price has not touched or reacted from a valid H4 Order Block or Fair Value Gap"],
+        "ruleChecks": [
+            {"rule": "H4 Order Block/FVG", "status": "FAILED", "detail": "not touched"},
+            {"rule": "M15 Order Block/FVG", "status": "NOT_CHECKED", "detail": "n/a"},
+            {"rule": "POI Alignment", "status": "NOT_CHECKED", "detail": "n/a"},
+            {"rule": "Entry / SL / TP", "status": "NOT_CHECKED", "detail": "n/a"},
+        ],
+        "suggestedEntry": None,
+        "stopLoss": None,
+        "takeProfit": None,
+        "riskReward": None,
+        "recommendation": "WAIT",
+    }
 
 
 def _seed_trades(client, n=35, seed=21):
@@ -41,52 +111,57 @@ def _seed_trades(client, n=35, seed=21):
         assert resp.status_code == 201, resp.text
 
 
-_CANDIDATE = {
-    "pair": "EURUSD",
-    "asset": "Forex",
-    "direction": "buy",
-    "session": "London",
-    "h4Trend": "Bullish",
-    "h4PoiType": "Order Block",
-    "hasBos": True,
-    "hasChoch": True,
-    "hasLiquiditySweep": True,
-    "plannedRR": 2.5,
-    "ruleScore": 82,
-    "confidence": 80,
-}
-
-
-def test_pretrade_analysis_before_any_model_trained(client):
-    """Phase 5 must be useful on day one — before ``/ml/train`` has
-    ever been called, the endpoint should degrade to a rule-score-only
-    estimate rather than error."""
-    resp = client.post("/api/v1/assistant/pretrade-analysis", json=_CANDIDATE)
-    assert resp.status_code == 200
+def test_pretrade_wait_skips_ml_and_history_entirely(client, monkeypatch):
+    """Rule #5: when the strategy itself says WAIT, ML/history are
+    never even queried -- the strategy's own decision is the only
+    thing that matters, and nothing computes a probability for a setup
+    that doesn't qualify."""
+    monkeypatch.setattr(assistant_service, "validate_h4_m15_ob", lambda h4, m15: _fake_wait())
+    resp = client.post("/api/v1/assistant/pretrade-analysis", json=_REQUEST)
+    assert resp.status_code == 200, resp.text
     body = resp.json()
-
+    assert body["tradeStatus"] == "INVALID"
+    assert body["recommendation"] == "WAIT"
+    assert body["direction"] is None
+    assert len(body["ruleChecks"]) == 4
+    assert body["ruleChecks"][0]["rule"] == "H4 Order Block/FVG"
+    assert body["ruleChecks"][0]["status"] == "FAILED"
     assert body["mlAvailable"] is False
-    assert body["tradeQualityScore"] == 82
     assert body["winProbability"] is None
-    assert body["modelVersion"] is None
-    assert body["algorithm"] is None
-    assert body["recommendation"] in ("Strong Buy", "Buy", "Wait", "Avoid")
-    assert body["recommendation"] != "Strong Buy"  # never Strong Buy at Low confidence
+    assert any("no ml or history lookup" in r.lower() for r in body["historicalReasons"])
+
+
+def test_pretrade_valid_before_any_model_trained(client, monkeypatch):
+    """Must be useful on day one — before ``/ml/train`` has ever been
+    called, a VALID setup still gets a rule/history-based estimate
+    rather than an error."""
+    monkeypatch.setattr(assistant_service, "validate_h4_m15_ob", lambda h4, m15: _fake_valid())
+    resp = client.post("/api/v1/assistant/pretrade-analysis", json=_REQUEST)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["tradeStatus"] == "VALID"
+    assert body["recommendation"] == "TAKE"
+    assert body["direction"] == "buy"
+    assert body["suggestedEntry"] == 1.1000
+    assert body["mlAvailable"] is False
+    assert body["mlRecommendation"] in ("Strong Buy", "Buy", "Wait", "Avoid")
+    assert body["mlRecommendation"] != "Strong Buy"  # never Strong Buy at Low confidence
     assert any("No trained ML model yet" in r for r in body["historicalReasons"])
-    # Phase 7 explanation fields:
-    assert isinstance(body["strengths"], list) and len(body["strengths"]) > 0
-    assert isinstance(body["weaknesses"], list)
+    assert any("official strategy passed" in s for s in body["strengths"])
+    # The old trend/BOS/CHOCH-based commentary must be gone.
+    assert not any("BOS" in s or "CHOCH" in s for s in body["strengths"] + body["weaknesses"])
 
 
-def test_pretrade_analysis_after_training_uses_ml(client):
+def test_pretrade_valid_after_training_uses_ml(client, monkeypatch):
+    monkeypatch.setattr(assistant_service, "validate_h4_m15_ob", lambda h4, m15: _fake_valid())
     _seed_trades(client)
     train_resp = client.post("/api/v1/ml/train", json={})
     assert train_resp.status_code == 200, train_resp.text
 
-    resp = client.post("/api/v1/assistant/pretrade-analysis", json=_CANDIDATE)
-    assert resp.status_code == 200
+    resp = client.post("/api/v1/assistant/pretrade-analysis", json=_REQUEST)
+    assert resp.status_code == 200, resp.text
     body = resp.json()
-
+    assert body["tradeStatus"] == "VALID"
     assert body["mlAvailable"] is True
     assert body["winProbability"] is not None
     assert 0.0 <= body["winProbability"] <= 1.0
@@ -95,25 +170,15 @@ def test_pretrade_analysis_after_training_uses_ml(client):
     assert not any("No trained ML model yet" in r for r in body["historicalReasons"])
 
 
-def test_pretrade_analysis_counter_trend_candidate_shows_weaknesses(client):
-    counter_trend = {
-        "pair": "EURUSD",
-        "direction": "sell",
-        "h4Trend": "Bullish",
-        "hasBos": False,
-        "hasChoch": False,
-        "hasLiquiditySweep": False,
-        "plannedRR": 1.0,
-        "ruleScore": 20,
-        "confidence": 15,
-    }
-    resp = client.post("/api/v1/assistant/pretrade-analysis", json=counter_trend)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert any("counter to the H4" in w for w in body["weaknesses"])
-    assert body["recommendation"] == "Avoid"
-
-
 def test_pretrade_analysis_missing_pair_is_422(client):
-    resp = client.post("/api/v1/assistant/pretrade-analysis", json={"direction": "buy"})
+    body = {**_REQUEST}
+    del body["pair"]
+    resp = client.post("/api/v1/assistant/pretrade-analysis", json=body)
+    assert resp.status_code == 422
+
+
+def test_pretrade_analysis_missing_m15_candles_is_422(client):
+    body = {**_REQUEST}
+    del body["m15Candles"]
+    resp = client.post("/api/v1/assistant/pretrade-analysis", json=body)
     assert resp.status_code == 422

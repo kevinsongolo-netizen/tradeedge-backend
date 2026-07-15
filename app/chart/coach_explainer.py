@@ -1,140 +1,78 @@
 """Plain-language explanation + confidence scoring (Chart Analysis
 Engine — Level 3, "AI Trading Coach").
 
-Takes a ``ChartAnalysis`` (Level 1) and a trade-validation dict (Level
-2, see ``app.chart.trade_validator.validate_trade``) and explains the
-decision in full sentences — never just "Buy" or "Sell" on their own,
-per the spec's explicit requirement. Pure function, no I/O.
+v2 — rewritten to be a thin narrator over the ONE official strategy's
+own validation dict (``app.chart.htf_ltf_ob_strategy.validate_h4_m15_ob``),
+never a second, independent scorer. The old version computed its own
+"trend alignment"/"BOS quality"/"CHOCH quality" scores from
+``ChartAnalysis`` directly — that meant the Chart Analysis Engine could
+show two different, disagreeing pictures of the same trade (the
+validator's real reasons vs. this module's own trend/BOS/CHOCH-based
+narrative). Per the user's explicit instruction ("only one official
+strategy module ... I do not want duplicate strategy logic"), this
+module now does no independent trade-quality judgement at all: it only
+turns ``validation``'s own fields (tradeStatus, direction, confidence,
+reasonsPassed/Failed, ruleChecks) into readable sentences. Pure
+function, no I/O.
 """
 from __future__ import annotations
 
 from app.schemas.chart import ChartAnalysis
 
-
-def _trend_quality(analysis: ChartAnalysis, direction: str | None) -> int:
-    if direction is None:
-        return 20
-    aligned = (direction == "buy" and analysis.trend == "Bullish") or (
-        direction == "sell" and analysis.trend == "Bearish"
-    )
-    return 90 if aligned else 15
-
-
-def _poi_quality(analysis: ChartAnalysis) -> int:
-    if analysis.entry_zone is not None and not analysis.entry_zone.mitigated:
-        return 90
-    context = (analysis.current_price_context or "").lower()
-    if "inside" in context:
-        return 70
-    return 25
-
-
-def _liquidity_quality(analysis: ChartAnalysis) -> int:
-    liquidity = (analysis.liquidity or "").lower()
-    if "no clear" in liquidity or "not determined" in liquidity:
-        return 30
-    return 85
-
-
-def _bos_quality(analysis: ChartAnalysis) -> int:
-    event = (analysis.latest_event or "").lower()
-    if "bos" in event:
-        return 90
-    if event:
-        return 40
-    return 20
-
-
-def _choch_quality(analysis: ChartAnalysis) -> int:
-    event = (analysis.latest_event or "").lower()
-    if "choch" in event:
-        return 90
-    if event:
-        return 40
-    return 20
-
-
-def _fvg_quality(analysis: ChartAnalysis) -> int:
-    fvg = (analysis.fvg_status or "").lower()
-    if "mitigated" in fvg and "unmitigated" not in fvg:
-        return 90
-    if "unmitigated" in fvg:
-        return 60
-    return 30
-
-
-def _rr_quality(effective_rr: float | None, min_rr: float) -> int:
-    if effective_rr is None:
-        return 20
-    if effective_rr >= min_rr + 1:
-        return 100
-    if effective_rr >= min_rr:
-        return 70
-    return 30
+_STATUS_SCORE = {"PASSED": 100, "FAILED": 0, "NOT_CHECKED": 0}
+_RULE_TO_FIELD = {
+    "H4 Order Block/FVG": "h4_poi",
+    "M15 Order Block/FVG": "m15_poi",
+    "POI Alignment": "poi_alignment",
+    "Entry / SL / TP": "entry_target",
+}
 
 
 def build_confidence_breakdown(analysis: ChartAnalysis, validation: dict, min_rr: float = 2.0) -> dict:
-    direction = validation.get("direction")
-    trend_alignment = _trend_quality(analysis, direction)
-    poi_quality = _poi_quality(analysis)
-    liquidity_quality = _liquidity_quality(analysis)
-    bos_quality = _bos_quality(analysis)
-    choch_quality = _choch_quality(analysis)
-    fvg_quality = _fvg_quality(analysis)
-    rr_quality = _rr_quality(validation.get("riskReward"), min_rr)
-
-    components = [trend_alignment, poi_quality, liquidity_quality, bos_quality, choch_quality, fvg_quality, rr_quality]
-    overall = round(sum(components) / len(components))
+    """Reads the funnel's own ``ruleChecks`` (added in
+    ``htf_ltf_ob_strategy`` v3) and turns each step into a 0/100 score
+    plus the strategy's own overall confidence -- no separate
+    trend/BOS/CHOCH/FVG/RR scoring of any kind. ``analysis`` and
+    ``min_rr`` are accepted only to keep this function's signature
+    stable for existing callers; neither is used for scoring anymore."""
+    del analysis, min_rr  # kept for call-site compatibility only
+    fields = {"h4_poi": 0, "m15_poi": 0, "poi_alignment": 0, "entry_target": 0}
+    for check in validation.get("ruleChecks") or []:
+        field = _RULE_TO_FIELD.get(check.get("rule"))
+        if field is not None:
+            fields[field] = _STATUS_SCORE.get(check.get("status"), 0)
 
     return {
-        "trendAlignment": trend_alignment,
-        "poiQuality": poi_quality,
-        "liquidityQuality": liquidity_quality,
-        "bosQuality": bos_quality,
-        "chochQuality": choch_quality,
-        "fvgQuality": fvg_quality,
-        "rrQuality": rr_quality,
-        "overall": overall,
+        **fields,
+        "overall": validation.get("confidence", 0),
     }
 
 
 def explain(analysis: ChartAnalysis, validation: dict, min_rr: float = 2.0) -> dict:
+    """Narrates ``validation`` (the single source of truth for whether
+    this is a real trade) in full sentences. ``analysis`` is only used
+    for the current price / premium-discount context line -- never to
+    re-decide anything the strategy already decided."""
+    del min_rr  # no min-R:R gate in the active strategy; kept for signature compatibility
     direction = validation.get("direction")
     is_valid = validation.get("tradeStatus") == "VALID"
-    confidence = build_confidence_breakdown(analysis, validation, min_rr)
+    confidence = build_confidence_breakdown(analysis, validation)
 
     explanation: list[str] = []
+    for check in validation.get("ruleChecks") or []:
+        icon = "✓" if check.get("status") == "PASSED" else ("✗" if check.get("status") == "FAILED" else "—")
+        explanation.append(f"{icon} {check.get('rule')}: {check.get('detail')}")
 
     if is_valid and direction is not None:
         headline = f"{direction.upper()} ANALYSIS"
-        explanation.append(f"The H4 trend is {analysis.trend.lower()}.")
-        explanation.append(f"{analysis.current_price_context}.")
-        if analysis.liquidity and "no clear" not in analysis.liquidity.lower():
-            explanation.append(f"{analysis.liquidity}.")
-        if analysis.latest_event:
-            explanation.append(f"A {analysis.latest_event.lower()} formed.")
-        if analysis.fvg_status:
-            explanation.append(f"{analysis.fvg_status}.")
-        explanation.append("The setup follows the higher timeframe trend.")
         rr = validation.get("riskReward")
         if rr is not None:
-            explanation.append(f"Risk Reward is 1:{rr:.1f}.")
-        if validation.get("reasonsFailed"):
-            for reason in validation["reasonsFailed"]:
-                explanation.append(reason.lstrip("✗ ").strip() + ".")
-        else:
-            explanation.append("No obvious conflicts are detected.")
+            explanation.append(f"Risk:Reward works out to 1:{rr:.1f} at current structure.")
+        explanation.append("Every step of your H4→M15 POI strategy passed — this is a real setup, not a guess.")
         recommendation = direction.upper()
     else:
-        headline = "NO TRADE"
-        pd = analysis.premium_discount
-        bias_word = "buys" if direction == "buy" else "sells" if direction == "sell" else "a trade"
-        explanation.append(f"Price is trading in {pd.lower()} while looking for {bias_word}." if pd != "Equilibrium" else "Price is near equilibrium with no clear edge yet.")
-        for reason in validation.get("reasonsFailed", []):
-            explanation.append(reason.lstrip("✗ ").strip() + ".")
-        if not validation.get("reasonsFailed"):
-            explanation.append("The setup does not currently meet the minimum trade criteria.")
-        explanation.append("Wait for confirmation.")
+        headline = "WAIT"
+        explanation.append("Your H4→M15 POI strategy hasn't fully lined up yet — see which rule above is still pending.")
         recommendation = "WAIT"
 
     return {

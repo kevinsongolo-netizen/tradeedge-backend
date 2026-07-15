@@ -22,6 +22,41 @@ from app.chart.vision_provider import VisionProviderError, get_vision_provider
 from app.errors import ValidationError
 from app.schemas.chart import ChartAnalysis
 
+_IMAGE_NOT_SUPPORTED_DETAIL = (
+    "Screenshot analysis only sees one chart, so it can't check both the "
+    "H4 and M15 Point of Interest your strategy requires -- paste H4+M15 "
+    "candle data instead (Chart Analysis Engine's \"candles\" mode, Live "
+    "Feed, or the Scanner). Two-screenshot (H4 + M15) support isn't built yet."
+)
+
+
+def _image_not_supported_validation() -> dict:
+    """The screenshot-upload path can only read ONE chart, so it can
+    never check the H4 AND M15 Point of Interest the user's one
+    official strategy requires -- rather than silently falling back to
+    the retired Classic Bias validator (a second, disagreeing strategy
+    engine), this returns an honest WAIT with every rule marked
+    NOT_CHECKED and a clear explanation of why."""
+    not_checked = [
+        {"rule": "H4 Order Block/FVG", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
+        {"rule": "M15 Order Block/FVG", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
+        {"rule": "POI Alignment", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
+        {"rule": "Entry / SL / TP", "status": "NOT_CHECKED", "detail": _IMAGE_NOT_SUPPORTED_DETAIL},
+    ]
+    return {
+        "tradeStatus": "INVALID",
+        "direction": None,
+        "confidence": 0,
+        "reasonsPassed": [],
+        "reasonsFailed": [f"✗ {_IMAGE_NOT_SUPPORTED_DETAIL}"],
+        "ruleChecks": not_checked,
+        "suggestedEntry": None,
+        "stopLoss": None,
+        "takeProfit": None,
+        "riskReward": None,
+        "recommendation": "WAIT",
+    }
+
 
 class ChartService:
     async def analyze_candles(self, candles: list[dict]) -> dict[str, Any]:
@@ -94,17 +129,19 @@ class ChartService:
         has_m15_bos: bool, has_m15_choch: bool, has_m15_entry_confirmation: bool,
         has_liquidity_sweep: bool, min_rr: float,
     ) -> dict[str, Any]:
+        """Screenshot-upload path. NOTE: this can only ever see ONE
+        chart, so it can't run the ONE official H4->M15 POI strategy
+        (which needs both timeframes) -- rather than quietly falling
+        back to the retired Classic Bias validator (which would make
+        this the one place in the app running a second, different
+        strategy), it returns an explicit, clearly-explained WAIT. All
+        of ``direction``/``planned_rr``/``has_m15_bos``/``has_m15_choch``/
+        ``has_m15_entry_confirmation``/``has_liquidity_sweep`` are kept
+        as accepted (unused) parameters only so this method's signature
+        doesn't need to change for existing callers."""
+        del direction, planned_rr, has_m15_bos, has_m15_choch, has_m15_entry_confirmation, has_liquidity_sweep
         analysis_dict, meta = await self.analyze_image(image_bytes, mime_type)
         analysis = ChartAnalysis(**analysis_dict)
-        validation = self.validate(
-            analysis,
-            direction=direction,
-            planned_rr=planned_rr,
-            has_m15_bos=has_m15_bos,
-            has_m15_choch=has_m15_choch,
-            has_m15_entry_confirmation=has_m15_entry_confirmation,
-            has_liquidity_sweep=has_liquidity_sweep,
-            min_rr=min_rr,
-        )
+        validation = _image_not_supported_validation()
         coach_result = self.coach(analysis, validation, min_rr)
         return {"analysis": analysis_dict, "validation": validation, "coach": coach_result, "meta": meta}

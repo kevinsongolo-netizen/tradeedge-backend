@@ -8,8 +8,17 @@ from app.schemas.common import CamelModel
 
 
 class BacktestRequest(CamelModel):
+    """``candles`` is always the H4 series. ``m15Candles`` is now the
+    normal path -- when supplied, this replays the active H4->M15 POI
+    strategy (dual-timeframe, no forced R:R, no direction override).
+    Omitting ``m15Candles`` falls back to the original single-timeframe
+    Classic Bias replay (``min_rr``/``direction`` only apply there) --
+    kept working for later reuse, not exposed in the current UI."""
+
     candles: list[CandleIn] = Field(min_length=1)
+    m15_candles: list[CandleIn] | None = None
     lookback_window: int = 100
+    lookback_window_m15: int = 100
     min_rr: float = 2.0
     direction: str | None = None
 

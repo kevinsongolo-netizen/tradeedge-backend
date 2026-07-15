@@ -180,6 +180,93 @@ def historical_reasons(*, similar_trades_count: int, similar_win_rate: float | N
     return reasons
 
 
+def explain_trade_from_strategy(
+    *, planned_rr: float | None, historical_avg_rr: float | None = None, confidence: int | None = None,
+) -> dict[str, list[str]]:
+    """v2 Phase 7, for the rebuilt Pre-Trade Check (only ever called
+    once the ONE official strategy has already said VALID -- see
+    ``app.chart.htf_ltf_ob_strategy``). Deliberately does NOT comment
+    on trend/BOS/CHOCH/liquidity-sweep the way the old ``explain_trade``
+    did: the active strategy doesn't use any of those, so fabricating
+    "No BOS confirmation"-style weaknesses about rules that don't gate
+    anything would be misleading noise, not real signal. Only comments
+    on what ML/history can actually speak to."""
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+
+    strengths.append(
+        "H4 and M15 Point of Interest touched and aligned -- every rule in your official strategy passed"
+    )
+
+    if planned_rr is not None:
+        if historical_avg_rr is not None:
+            if planned_rr < historical_avg_rr - 0.3:
+                weaknesses.append(
+                    f"This setup's R:R ({planned_rr:.1f}) is below your historical average ({historical_avg_rr:.1f})"
+                )
+            else:
+                strengths.append(
+                    f"This setup's R:R ({planned_rr:.1f}) meets or exceeds your historical average ({historical_avg_rr:.1f})"
+                )
+        elif planned_rr < 1.5:
+            weaknesses.append(f"R:R ({planned_rr:.1f}) is on the low side")
+
+    if confidence is not None and confidence >= 100:
+        strengths.append("Full confidence -- entry, stop loss, and take profit all resolved from real market structure")
+
+    return {"strengths": strengths, "weaknesses": weaknesses}
+
+
+def analyze_pretrade_from_strategy(
+    validation: dict[str, Any],
+    *,
+    ml_result: dict[str, Any] | None,
+    similar_result: dict[str, Any],
+) -> dict[str, Any]:
+    """v2 Pre-Trade Check orchestration -- takes the ONE official
+    strategy's own validation dict (already decided VALID by the time
+    this is called) plus ML/similar-trade context, and returns ONLY
+    supplementary information. Never recomputes or second-guesses
+    ``validation``'s own tradeStatus/recommendation -- per the user's
+    explicit rule, ML's job is limited to win-probability, similar
+    trades, confidence, and repeated-mistake context."""
+    ml_available = ml_result is not None
+    similar_count = len(similar_result.get("similar") or [])
+    similar_win_rate = similar_result.get("winRate")
+    historical_avg_rr = similar_result.get("averageRR")
+
+    win_probability = ml_result.get("winProbability") if ml_result else None
+    quality_score = ml_result.get("predictedQualityScore") if ml_result else None
+
+    ai_confidence = classify_ai_confidence(similar_trades_count=similar_count, ml_available=ml_available)
+    risk_level = classify_risk_level(planned_rr=validation.get("riskReward"), historical_win_rate=similar_win_rate)
+    expected_rr = compute_expected_rr(win_probability=win_probability, planned_rr=validation.get("riskReward"))
+    ml_recommendation = recommend(quality_score=quality_score, ai_confidence=ai_confidence)
+    reasons = historical_reasons(similar_trades_count=similar_count, similar_win_rate=similar_win_rate, ml_available=ml_available)
+    explained = explain_trade_from_strategy(
+        planned_rr=validation.get("riskReward"),
+        historical_avg_rr=historical_avg_rr,
+        confidence=validation.get("confidence"),
+    )
+
+    return {
+        "trade_quality_score": quality_score,
+        "win_probability": win_probability,
+        "ai_confidence": ai_confidence,
+        "risk_level": risk_level,
+        "expected_rr": expected_rr,
+        "historical_win_rate": similar_win_rate,
+        "similar_trades_count": similar_count,
+        "ml_recommendation": ml_recommendation,
+        "strengths": explained["strengths"],
+        "weaknesses": explained["weaknesses"],
+        "historical_reasons": reasons,
+        "ml_available": ml_available,
+        "model_version": ml_result.get("modelVersion") if ml_result else None,
+        "algorithm": ml_result.get("algorithm") if ml_result else None,
+    }
+
+
 def analyze_pretrade(
     candidate: dict[str, Any],
     *,
