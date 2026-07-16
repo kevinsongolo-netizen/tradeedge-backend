@@ -270,6 +270,88 @@ async def test_jblanked_provider_parses_valid_response(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_jblanked_provider_calls_free_week_endpoint_not_paid_range(monkeypatch):
+    """Sprint 19: the range endpoint requires paid credits (confirmed via
+    a live 401 whose body said exactly that); this locks in that we hit
+    the free /week/ endpoint instead and filter client-side."""
+    provider = JblankedCalendarProvider(api_key="fake-test-key-not-real")
+    called_url = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, *args, **kwargs):
+            called_url["url"] = url
+            return _FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    await provider.get_events("2026-07-11", "2026-07-15")
+    assert called_url["url"].endswith("/calendar/week/")
+    assert "range" not in called_url["url"]
+
+
+@pytest.mark.asyncio
+async def test_jblanked_provider_filters_events_outside_requested_range(monkeypatch):
+    provider = JblankedCalendarProvider(api_key="fake-test-key-not-real")
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [
+                {
+                    "Name": "In Range Event",
+                    "Currency": "USD",
+                    "Impact": "High",
+                    "Date": "2026.07.13 15:30:00",
+                },
+                {
+                    "Name": "Out Of Range Event",
+                    "Currency": "USD",
+                    "Impact": "High",
+                    "Date": "2026.07.20 15:30:00",
+                },
+            ]
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return _FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    events = await provider.get_events("2026-07-11", "2026-07-15")
+    assert len(events) == 1
+    assert events[0]["event"] == "In Range Event"
+
+
+@pytest.mark.asyncio
 async def test_jblanked_provider_defaults_unknown_impact_to_low(monkeypatch):
     provider = JblankedCalendarProvider(api_key="fake-test-key-not-real")
 

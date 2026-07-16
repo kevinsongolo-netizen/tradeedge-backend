@@ -140,10 +140,26 @@ def _parse_jblanked_date(raw: str | None) -> str | None:
 
 class JblankedCalendarProvider(CalendarProvider):
     """Real economic calendar data via JBlanked's News API (MQL5 feed) --
-    see https://www.jblanked.com/news/api/docs/calendar/. Always used
-    through ``CachingCalendarProvider`` (see ``get_calendar_provider``
-    below), never called directly on every poll, since their free tier
-    is rate-limited to 1 request/day."""
+    see https://www.jblanked.com/news/api/docs/calendar/.
+
+    Sprint 19 correction: their ``/calendar/range/`` endpoint (arbitrary
+    from/to dates) turned out to require paid credits despite the docs
+    reading as if it were free -- confirmed live via the actual response
+    body: "This endpoint requires credits, and you currently do not have
+    any." Their ``/calendar/week/`` endpoint IS genuinely free (no
+    credits charged), so we call that instead and filter the returned
+    week's events down to the caller's requested ``[from_date, to_date]``
+    window in Python. The one real limitation this brings: events more
+    than a few days outside the current calendar week (e.g. next
+    Monday's events queried from this Friday) won't be returned, since
+    JBlanked's free tier has no way to ask for a different week. Good
+    enough for a near-term "any high-impact news due soon" check, which
+    is all this feature needs.
+
+    Always used through ``CachingCalendarProvider`` (see
+    ``get_calendar_provider`` below), never called directly on every
+    poll, since JBlanked's overall free-tier usage is also rate-limited.
+    """
 
     name = "jblanked"
 
@@ -153,20 +169,19 @@ class JblankedCalendarProvider(CalendarProvider):
     async def get_events(self, from_date: str, to_date: str) -> list[dict[str, Any]]:
         import httpx
 
-        url = "https://www.jblanked.com/news/api/mql5/calendar/range/"
-        params = {"from": from_date, "to": to_date}
+        url = "https://www.jblanked.com/news/api/mql5/calendar/week/"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Api-Key {self._api_key}",
         }
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params, headers=headers)
+                resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError as exc:
             # Surface JBlanked's actual response body (not just the status
-            # line) -- e.g. "Invalid API key" vs "quota exceeded" vs
+            # line) -- e.g. "Invalid API key" vs "requires credits" vs
             # "authentication credentials were not provided" are all
             # distinct 401/403 causes and the generic exception string
             # doesn't include the body, which makes this otherwise
@@ -185,13 +200,28 @@ class JblankedCalendarProvider(CalendarProvider):
                 "https://www.jblanked.com/news/api/docs/calendar/."
             )
 
+        try:
+            range_start = datetime.strptime(from_date, "%Y-%m-%d").date()
+            range_end = datetime.strptime(to_date, "%Y-%m-%d").date()
+        except ValueError:
+            range_start = range_end = None  # unparseable range -> don't filter
+
         events: list[dict[str, Any]] = []
         for raw in data:
+            iso_time = _parse_jblanked_date(raw.get("Date"))
+            if range_start is not None and iso_time:
+                try:
+                    event_date = datetime.fromisoformat(iso_time).date()
+                except ValueError:
+                    event_date = None
+                if event_date is not None and not (range_start <= event_date <= range_end):
+                    continue
+
             impact_raw = str(raw.get("Impact", "")).lower()
             impact = impact_raw if impact_raw in ("low", "medium", "high") else "low"
             events.append(
                 {
-                    "time": _parse_jblanked_date(raw.get("Date")),
+                    "time": iso_time,
                     "currency": raw.get("Currency") or "",
                     "event": raw.get("Name") or "Unnamed event",
                     "impact": impact,
