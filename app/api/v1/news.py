@@ -4,7 +4,10 @@
 economic news falls near a planned trade time. Stateless, no auth/DB
 dependency, same pattern as the Chart Analysis Engine and tools
 routers. Uses ``PlaceholderCalendarProvider`` (clearly-labeled example
-data) until ``FINNHUB_API_KEY`` is configured — see
+data) until ``JBLANKED_API_KEY`` or ``FINNHUB_API_KEY`` is configured
+(JBlanked is checked first — Finnhub's economic calendar now requires a
+paid plan; both real providers are wrapped in an in-process cache since
+JBlanked's free tier is limited to 1 request/day) — see
 ``app/news/calendar_provider.py``.
 """
 from __future__ import annotations

@@ -260,8 +260,17 @@ def validate_row(row: dict) -> dict:
         if value is not None and not isinstance(value, (int, float)):
             errors.append(f"Invalid numeric {field}")
     rr = row.get("rr")
-    if isinstance(rr, (int, float)) and rr <= 0:
-        errors.append("RR must be positive")
+    # Sprint 18 fix: this used to reject rr <= 0, but ``rr`` defaults to
+    # 0.0 (not None) for every row that never had a real R:R supplied
+    # (build_dataset's ``rr_val = _num(entry.get("rr")) or 0.0``) --
+    # under the Personal Averaging Strategy (no fixed SL/TP), that's
+    # EVERY trade, so this was silently invalidating 100% of new-
+    # strategy trades even after ``rr`` was dropped from
+    # ML_REQUIRED_FIELDS above. 0 is therefore treated as "not
+    # supplied" and allowed through; only a genuinely nonsensical
+    # negative R:R is still flagged.
+    if isinstance(rr, (int, float)) and rr < 0:
+        errors.append("RR must not be negative")
     if not row.get("m15_confirmations"):
         warnings.append("Missing M15 confirmations")
     if row.get("confidence") is None:

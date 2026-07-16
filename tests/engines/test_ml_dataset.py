@@ -81,3 +81,31 @@ def test_validate_row_no_longer_requires_old_strategy_scoring_fields():
     result = validate_row(row)
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+def test_validate_row_zero_rr_is_not_missing_rr_treated_as_not_supplied():
+    """Regression test for a second Sprint 18 bug found via the user's
+    live data: even after rr was dropped from ML_REQUIRED_FIELDS, every
+    Personal Averaging Strategy trade was still being rejected because
+    build_dataset defaults a never-supplied rr to 0.0 (not None), and
+    validate_row was rejecting any rr <= 0 as 'RR must be positive'.
+    0 must be treated the same as 'not supplied', not as invalid."""
+    row = {
+        "id": "1", "date": "2026-01-01", "pair": "GOLD", "direction": "buy",
+        "asset": "Metals", "entry": 4050.3, "pnl": 1.03, "session": "Asian",
+        "outcome": "Win", "rr": 0.0,
+    }
+    result = validate_row(row)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_row_negative_rr_is_still_rejected():
+    row = {
+        "id": "1", "date": "2026-01-01", "pair": "GOLD", "direction": "buy",
+        "asset": "Metals", "entry": 4050.3, "pnl": 1.03, "session": "Asian",
+        "outcome": "Win", "rr": -1.0,
+    }
+    result = validate_row(row)
+    assert result["valid"] is False
+    assert "RR must not be negative" in result["errors"]

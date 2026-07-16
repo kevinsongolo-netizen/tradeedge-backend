@@ -68,9 +68,14 @@ class Settings(BaseSettings):
     # --- Sprint 12: Market Context Filters — news/economic calendar (optional) ---
     # When unset, the news filter automatically falls back to
     # PlaceholderCalendarProvider (app/news/calendar_provider.py). Set
-    # this (e.g. as a Render env var) to switch on real economic
-    # calendar data via Finnhub's free tier with zero code changes.
-    # Get a free key at https://finnhub.io/register.
+    # one of these (e.g. as a Render env var) to switch on real
+    # economic calendar data with zero code changes -- checked in this
+    # order (JBlanked first, since Finnhub's economic calendar moved
+    # behind their paid plan; Finnhub is kept for anyone who does pay):
+    #   JBLANKED_API_KEY -- free key at https://www.jblanked.com/api/key/
+    #   FINNHUB_API_KEY  -- https://finnhub.io/register (economic
+    #                       calendar requires a paid Finnhub plan)
+    jblanked_api_key: str | None = None
     finnhub_api_key: str | None = None
 
     @property

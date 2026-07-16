@@ -6,7 +6,10 @@
 //|  balance/equity/margin each tick (Sprint 18) so the website can   |
 //|  show a margin-call/stop-out buffer warning -- there is no fixed  |
 //|  stop loss in the Personal Averaging Strategy, so this is the     |
-//|  real safety net: it only WARNS, it never closes anything.        |
+//|  real safety net: it only WARNS, it never closes anything. Also   |
+//|  sends its OWN phone push notification the moment margin status   |
+//|  goes to WARNING or DANGER, so you don't have to keep the website |
+//|  open to find out -- same free push mechanism as the VALID alert. |
 //|                                                                    |
 //|  ONE-TIME SETUP:                                                   |
 //|  1. In MT5: Tools -> Options -> Expert Advisors -> check "Allow    |
@@ -44,9 +47,13 @@ input int    RepeatAlertMinutes  = 60;     // Don't repeat the same VALID phone 
 input bool   PushMarginBuffer     = true;   // Also push account balance/equity/margin each tick (Sprint 18)
 input bool   IncludeDailyBias     = true;   // Also send Daily candles for the Personal Averaging Strategy's Daily Bias rule (Sprint 18)
 input int    DailyCandleCount     = 10;     // How many D1 candles to send (only used if the above is true)
+input bool   PushMarginAlerts      = true;  // Send a phone push notification when margin buffer status is WARNING or DANGER
+input int    MarginRepeatAlertMinutes = 15; // Don't repeat the same margin WARNING/DANGER alert more often than this -- shorter than RepeatAlertMinutes since a margin problem is more urgent than a trade setup
 
 datetime lastNotifyTime = 0;
 string   lastNotifyStatus = "";
+datetime lastMarginNotifyTime = 0;
+string   lastMarginNotifyStatus = "";
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -273,4 +280,42 @@ void PushAccountMargin()
    Print("TradeEdge Live Feed: margin push OK (HTTP ", status, "), status=", status_, ". Response: ", response);
    if(status_ == "DANGER")
       Print("TradeEdge Live Feed: MARGIN BUFFER DANGER -- ", response);
+
+   HandleMarginPlainResponse(response);
+}
+
+//+------------------------------------------------------------------+
+//| Sends a phone push notification when the margin buffer status is  |
+//| WARNING or DANGER, not more than once per MarginRepeatAlertMinutes|
+//| for the same status. This is the real safety net for the Personal |
+//| Averaging Strategy's no-fixed-stop-loss design -- it only WARNS,  |
+//| it never closes anything itself.                                  |
+//+------------------------------------------------------------------+
+void HandleMarginPlainResponse(string response)
+{
+   if(!PushMarginAlerts)
+      return;
+
+   string status_ = ExtractValue(response, "STATUS");
+   if(status_ != "WARNING" && status_ != "DANGER")
+   {
+      lastMarginNotifyStatus = status_;
+      return;
+   }
+
+   string marginPct  = ExtractValue(response, "MARGIN_LEVEL_PCT");
+   string bufferCall = ExtractValue(response, "BUFFER_TO_MARGIN_CALL_PCT");
+
+   datetime now = TimeCurrent();
+   bool statusChanged   = (status_ != lastMarginNotifyStatus);
+   bool cooldownElapsed = ((int)(now - lastMarginNotifyTime) >= MarginRepeatAlertMinutes * 60);
+   if(statusChanged || cooldownElapsed)
+   {
+      string msg = "TradeEdge Margin " + status_ + ": level " + marginPct +
+                   "% (" + bufferCall + " pts above margin call). No fixed stop loss is set -- check your account.";
+      SendNotification(msg);
+      Print("TradeEdge Live Feed: sent MARGIN push notification -> ", msg);
+      lastMarginNotifyTime = now;
+   }
+   lastMarginNotifyStatus = status_;
 }
