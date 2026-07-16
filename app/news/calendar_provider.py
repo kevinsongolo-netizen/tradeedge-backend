@@ -164,7 +164,18 @@ class JblankedCalendarProvider(CalendarProvider):
                 resp = await client.get(url, params=params, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-        except Exception as exc:  # network error, timeout, non-2xx, bad JSON
+        except httpx.HTTPStatusError as exc:
+            # Surface JBlanked's actual response body (not just the status
+            # line) -- e.g. "Invalid API key" vs "quota exceeded" vs
+            # "authentication credentials were not provided" are all
+            # distinct 401/403 causes and the generic exception string
+            # doesn't include the body, which makes this otherwise
+            # impossible to diagnose from the error alone.
+            body_snippet = exc.response.text[:300] if exc.response is not None else ""
+            raise CalendarProviderError(
+                f"JBlanked calendar request failed: {exc} -- response body: {body_snippet!r}"
+            ) from exc
+        except Exception as exc:  # network error, timeout, bad JSON, etc.
             raise CalendarProviderError(f"JBlanked calendar request failed: {exc}") from exc
 
         if not isinstance(data, list):
