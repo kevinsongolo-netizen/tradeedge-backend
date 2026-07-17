@@ -136,6 +136,33 @@ class PlaceholderVisionProvider(VisionProvider):
         }
 
 
+def _extract_json_object(text: str) -> dict[str, Any]:
+    """Parse the vision model's response as JSON, defensively.
+
+    The prompt tells Claude to respond with ONLY a JSON object, and it
+    usually does -- but vision models occasionally still wrap the
+    answer in a ```json ... ``` markdown fence, or add a short sentence
+    before/after the object despite the instruction. Rather than fail
+    the whole analysis on that kind of harmless formatting, strip a
+    fence if present and fall back to the first ``{...}`` span in the
+    text before giving up.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`").strip()
+        if stripped[:4].lower() == "json":
+            stripped = stripped[4:].strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(stripped[start : end + 1])
+    raise json.JSONDecodeError("No JSON object found in vision model response", stripped, 0)
+
+
 class AnthropicVisionProvider(VisionProvider):
     """Real vision analysis via Claude. Only imports/uses the
     ``anthropic`` SDK when actually constructed (i.e. only when an API
@@ -181,6 +208,7 @@ class AnthropicVisionProvider(VisionProvider):
                 "The 'anthropic' package is not installed. Add it to requirements.txt to use real vision analysis."
             ) from exc
 
+        text = ""
         try:
             client = anthropic.AsyncAnthropic(api_key=self._api_key)
             encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
@@ -201,9 +229,19 @@ class AnthropicVisionProvider(VisionProvider):
                 ],
             )
             text = "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
-            parsed = json.loads(text)
+            parsed = _extract_json_object(text)
         except json.JSONDecodeError as exc:
-            raise VisionProviderError("Vision model did not return valid JSON.") from exc
+            # Claude is told to respond with ONLY JSON, but vision models
+            # sometimes still wrap it in a ```json fence or add a stray
+            # sentence -- _extract_json_object() already tries to recover
+            # from that, so getting here means the response genuinely
+            # wasn't parseable. Include a snippet of the raw response so
+            # this is diagnosable from the API error alone, not just
+            # reproducible by re-running the same screenshot.
+            snippet = text[:300].replace("\n", " ")
+            raise VisionProviderError(
+                f"Vision model did not return valid JSON. Raw response started with: {snippet!r}"
+            ) from exc
         except VisionProviderError:
             raise
         except Exception as exc:  # noqa: BLE001 - any SDK/network failure becomes a VisionProviderError

@@ -80,3 +80,131 @@ async def test_anthropic_provider_wraps_api_failure_as_vision_error(monkeypatch)
     monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
     with pytest.raises(VisionProviderError):
         await provider.analyze_screenshot(b"fake-bytes", "image/png")
+
+
+def _fake_response_with_text(text: str):
+    class _Block:
+        type = "text"
+
+    block = _Block()
+    block.text = text
+
+    class _Response:
+        content = [block]
+
+    return _Response()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_parses_plain_json_response(monkeypatch):
+    """The happy path: Claude follows the "respond with ONLY JSON"
+    instruction exactly."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 80,
+        "pair": "XAUUSD", "timeframe": "M15", "orderDirection": "SELL",
+        "orderType": "Sell Limit", "entry": 4001.14, "stopLoss": 4010.33,
+        "takeProfit": 3982.77, "riskReward": 1.99, "lots": 0.06,
+        "poiType": "Bearish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["pair"] == "XAUUSD"
+    assert result["isPlaceholder"] is False
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_recovers_json_wrapped_in_markdown_fence(monkeypatch):
+    """Sprint 20 fix: vision models sometimes wrap the JSON answer in a
+    ```json fence despite being told not to -- this used to raise
+    'Vision model did not return valid JSON' and should now parse fine."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    fenced = '```json\n{"trend": "Bullish", "structure": "Bullish", ' \
+             '"currentPriceContext": "x", "liquidity": "x", "latestEvent": null, ' \
+             '"fvgStatus": null, "premiumDiscount": "Discount", "bias": "BUY", ' \
+             '"readConfidence": 70, "pair": "GOLDmicro", "timeframe": "M15", ' \
+             '"orderDirection": "SELL", "orderType": "Sell Limit", "entry": 4001.14, ' \
+             '"stopLoss": 4010.33, "takeProfit": 3982.77, "riskReward": 1.99, ' \
+             '"lots": 0.06, "poiType": "Bearish Order Block"}\n```'
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(fenced)
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["pair"] == "GOLDmicro"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_recovers_json_with_stray_surrounding_text(monkeypatch):
+    """Sprint 20 fix: a stray sentence before/after the JSON object
+    (no code fence) should also be recovered rather than failing."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    wrapped = (
+        'Here is the analysis:\n'
+        '{"trend": "Ranging", "structure": "Ranging", "currentPriceContext": "x", '
+        '"liquidity": "x", "latestEvent": null, "fvgStatus": null, '
+        '"premiumDiscount": "Equilibrium", "bias": "NONE", "readConfidence": 40, '
+        '"pair": "EURUSD", "timeframe": "H1", "orderDirection": null, '
+        '"orderType": null, "entry": null, "stopLoss": null, "takeProfit": null, '
+        '"riskReward": null, "lots": null, "poiType": null}\n'
+        'Let me know if you need anything else.'
+    )
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(wrapped)
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["pair"] == "EURUSD"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_raises_clean_error_on_genuinely_unparseable_response(monkeypatch):
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text("I'm not able to read this chart clearly.")
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    with pytest.raises(VisionProviderError, match="valid JSON"):
+        await provider.analyze_screenshot(b"fake-bytes", "image/png")
