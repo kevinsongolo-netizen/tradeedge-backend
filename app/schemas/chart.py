@@ -252,6 +252,7 @@ class SetupExtraction(CamelModel):
     fvg_status: str | None = None
     premium_discount: str
     read_confidence: int
+    number_consistency_warning: str | None = None
 
 
 class SimilarTradeSummary(CamelModel):

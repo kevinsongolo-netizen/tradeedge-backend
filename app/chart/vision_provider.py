@@ -131,6 +131,7 @@ class PlaceholderVisionProvider(VisionProvider):
             "riskReward": None,
             "lots": None,
             "poiType": "PLACEHOLDER — Bullish Order Block (example data)",
+            "numberConsistencyWarning": None,
             "provider": self.name,
             "isPlaceholder": True,
         }
@@ -161,6 +162,59 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if start != -1 and end != -1 and end > start:
         return json.loads(stripped[start : end + 1])
     raise json.JSONDecodeError("No JSON object found in vision model response", stripped, 0)
+
+
+def _apply_number_sanity_check(parsed: dict[str, Any]) -> None:
+    """Flag (never silently fix) a stop loss / take profit that lands on
+    the wrong side of the entry for the stated direction.
+
+    A vision model reading small price labels off a screenshot will
+    occasionally misread a digit -- there's no way to know which number
+    is wrong from the image alone, so this doesn't guess a correction.
+    It sets ``numberConsistencyWarning`` so the UI can tell the trader
+    to double-check the source screenshot instead of quietly trusting a
+    read that's internally impossible (e.g. a SELL's stop loss sitting
+    below its entry). Also recomputes riskReward deterministically from
+    entry/stopLoss/takeProfit when all three are numeric and consistent,
+    since that's plain arithmetic Python can do exactly, rather than
+    relying on the vision model's own arithmetic.
+    """
+    parsed["numberConsistencyWarning"] = None
+
+    direction = parsed.get("orderDirection")
+    entry = parsed.get("entry")
+    sl = parsed.get("stopLoss")
+    tp = parsed.get("takeProfit")
+    if direction not in ("BUY", "SELL") or not isinstance(entry, (int, float)):
+        return
+
+    problems = []
+    if isinstance(sl, (int, float)):
+        if direction == "SELL" and sl <= entry:
+            problems.append("stop loss is below/at entry, but should be above entry for a SELL")
+        if direction == "BUY" and sl >= entry:
+            problems.append("stop loss is above/at entry, but should be below entry for a BUY")
+    if isinstance(tp, (int, float)):
+        if direction == "SELL" and tp >= entry:
+            problems.append("take profit is above/at entry, but should be below entry for a SELL")
+        if direction == "BUY" and tp <= entry:
+            problems.append("take profit is below/at entry, but should be above entry for a BUY")
+
+    if problems:
+        parsed["numberConsistencyWarning"] = (
+            "These numbers look inconsistent with a "
+            + direction
+            + " order ("
+            + "; ".join(problems)
+            + ") -- double-check them against the screenshot, this may be a misread digit."
+        )
+        return
+
+    if isinstance(sl, (int, float)) and isinstance(tp, (int, float)):
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+        if risk > 0:
+            parsed["riskReward"] = round(reward / risk, 2)
 
 
 class AnthropicVisionProvider(VisionProvider):
@@ -249,6 +303,7 @@ class AnthropicVisionProvider(VisionProvider):
 
         parsed.setdefault("provider", self.name)
         parsed["isPlaceholder"] = False
+        _apply_number_sanity_check(parsed)
         return parsed
 
 

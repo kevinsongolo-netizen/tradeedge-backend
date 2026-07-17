@@ -36,7 +36,7 @@ _EXTRACTION_FIELDS = (
     "pair", "timeframe", "orderDirection", "orderType", "entry", "stopLoss",
     "takeProfit", "riskReward", "lots", "poiType", "trend", "structure",
     "currentPriceContext", "liquidity", "latestEvent", "fvgStatus",
-    "premiumDiscount", "readConfidence",
+    "premiumDiscount", "readConfidence", "numberConsistencyWarning",
 )
 
 

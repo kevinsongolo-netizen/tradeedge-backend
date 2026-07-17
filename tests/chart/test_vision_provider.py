@@ -208,3 +208,114 @@ async def test_anthropic_provider_raises_clean_error_on_genuinely_unparseable_re
     monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
     with pytest.raises(VisionProviderError, match="valid JSON"):
         await provider.analyze_screenshot(b"fake-bytes", "image/png")
+
+
+@pytest.mark.asyncio
+async def test_placeholder_provider_includes_number_consistency_key():
+    """Field always present (None when nothing to flag) so the frontend
+    and schema can rely on it existing."""
+    provider = PlaceholderVisionProvider()
+    result = await provider.analyze_screenshot(b"fake-image-bytes", "image/png")
+    assert result["numberConsistencyWarning"] is None
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_flags_sell_stop_loss_below_entry(monkeypatch):
+    """A SELL's stop loss must sit above entry (protects against price
+    rising against the short) -- if the vision model reads a SL below
+    entry, that's internally impossible and should be flagged, not
+    silently trusted (this is the bug a real user hit: GOLDmicro SELL
+    read with entry 63815.43 / SL 26276 -- SL on the wrong side)."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "SELL", "readConfidence": 90,
+        "pair": "GOLDmicro", "timeframe": "M15", "orderDirection": "SELL",
+        "orderType": "Sell Limit", "entry": 63815.43, "stopLoss": 26276,
+        "takeProfit": 63025.16, "riskReward": None, "lots": 0.06,
+        "poiType": "Bearish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["numberConsistencyWarning"] is not None
+    assert "SELL" in result["numberConsistencyWarning"]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_recomputes_risk_reward_deterministically(monkeypatch):
+    """When SL/TP are on the correct side of entry, riskReward is
+    recomputed from the numbers in Python (exact arithmetic) rather than
+    trusting whatever ratio the vision model stated."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "SELL", "readConfidence": 90,
+        "pair": "XAUUSD", "timeframe": "M15", "orderDirection": "SELL",
+        "orderType": "Sell Limit", "entry": 4001.14, "stopLoss": 4010.33,
+        "takeProfit": 3982.77, "riskReward": 999,  # deliberately wrong -- should be overridden
+        "lots": 0.06, "poiType": "Bearish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["numberConsistencyWarning"] is None
+    expected = round(abs(3982.77 - 4001.14) / abs(4001.14 - 4010.33), 2)
+    assert result["riskReward"] == expected
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_no_warning_when_sl_tp_missing(monkeypatch):
+    """No SL/TP read at all (both null) isn't a consistency problem --
+    it's just an incomplete read, already visible as '—' in the UI."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "SELL", "readConfidence": 75,
+        "pair": "BTCUSD", "timeframe": "M15", "orderDirection": "SELL",
+        "orderType": "Sell Limit", "entry": 63572.92, "stopLoss": None,
+        "takeProfit": None, "riskReward": None, "lots": None, "poiType": None,
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["numberConsistencyWarning"] is None
