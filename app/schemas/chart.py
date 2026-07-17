@@ -218,3 +218,78 @@ class CoachRequest(CamelModel):
     analysis: ChartAnalysis
     validation: TradeValidationResult
     min_rr: float = 2.0
+
+
+# --- Sprint 20: screenshot-first workflow -----------------------------------
+# Replaces the Level 2 (rule validation) / Level 3 (rule narration) result
+# shapes above for the /chart/full-analysis/image endpoint. Those older
+# models (TradeValidationResult, RuleCheck, CoachExplanationResult, ...)
+# are kept only because /chart/validate and /chart/coach still exist as
+# thin, optional, non-strategy-specific utilities -- nothing new is built
+# on top of them.
+
+
+class SetupExtraction(CamelModel):
+    """What the vision model read directly off the screenshot -- the
+    trader's own pending order/position and the chart's own structure
+    labels, transcribed as precisely as possible. Never judged here."""
+
+    pair: str | None = None
+    timeframe: str | None = None
+    order_direction: str | None = None  # "BUY" | "SELL" | "NONE" | None
+    order_type: str | None = None
+    entry: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    risk_reward: float | None = None
+    lots: float | None = None
+    poi_type: str | None = None
+    trend: str
+    structure: str
+    current_price_context: str
+    liquidity: str
+    latest_event: str | None = None
+    fvg_status: str | None = None
+    premium_discount: str
+    read_confidence: int
+
+
+class SimilarTradeSummary(CamelModel):
+    """One historical trade surfaced as supporting evidence for the
+    insight narrative -- e.g. "closest match: a loss on 2026-05-02"."""
+
+    id: str | None = None
+    date: str | None = None
+    pair: str | None = None
+    direction: str | None = None
+    outcome: str | None = None  # "Win" | "Loss" | "Breakeven"
+    similarity: float | None = None
+    pnl: float | None = None
+    rr: float | None = None
+
+
+class SetupInsight(CamelModel):
+    """The "have I seen this before, and how did it go?" result --
+    never a verdict. See ``app/engines/setup_insight_engine.py``."""
+
+    has_enough_history: bool
+    total_history_count: int
+    sample_size: int
+    wins: int
+    losses: int
+    breakeven: int
+    win_rate: float | None = None
+    average_rr: float | None = None
+    average_profit: float | None = None
+    top_similar: list[SimilarTradeSummary] = Field(default_factory=list)
+    narrative: list[str] = Field(default_factory=list)
+    risk_notes: list[str] = Field(default_factory=list)
+
+
+class ChartSetupInsightResponse(CamelModel):
+    """Response shape for ``POST /chart/full-analysis/image`` since
+    Sprint 20 -- the one screenshot-first-workflow call."""
+
+    extraction: SetupExtraction
+    insight: SetupInsight
+    meta: ImageAnalyzeMeta | None = None

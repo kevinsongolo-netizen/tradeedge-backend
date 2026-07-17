@@ -1,45 +1,53 @@
-"""Live MT5 feed schemas (Sprint 14 — Live MT5 Feed)."""
+"""Live MT5 feed schemas (Sprint 14; simplified Sprint 20).
+
+Sprint 20 -- the ingest payload dropped every field that only existed
+to feed the retired rule engine (candles, m15/daily candles, BOS/CHOCH
+flags, planned R:R, ...). An EA now only needs to say "here is the
+current price for this symbol/timeframe."
+"""
 from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field
-
-from app.schemas.chart import (
-    CandleIn,
-    ChartAnalysis,
-    CoachExplanationResult,
-    MultiTimeframeConfirmation,
-    TradeValidationResult,
-)
 from app.schemas.common import CamelModel
 
 
 class LiveIngestRequest(CamelModel):
-    """Body an MT5 EA (or any other live source) POSTs on every new
-    bar. Mirrors ``FullCandlesAnalysisRequest`` plus a symbol/timeframe
-    tag used as the storage key."""
+    """Body an MT5 EA (or any other live source) POSTs whenever it has
+    a fresh price for a symbol/timeframe."""
 
     symbol: str
     timeframe: str
-    candles: list[CandleIn] = Field(min_length=1)
-    m15_candles: list[CandleIn] | None = None
-    daily_candles: list[CandleIn] | None = None  # Sprint 18 -- Personal Averaging Strategy's Daily Bias
-    open_trade_in_loss: bool = False  # Sprint 18 -- fires the 2nd, same-size add-on entry check
-    direction: str | None = None
-    planned_rr: float | None = None
-    has_m15_bos: bool = False
-    has_m15_choch: bool = False
-    has_m15_entry_confirmation: bool = False
-    has_liquidity_sweep: bool = False
-    min_rr: float = 2.0
+    price: float | None = None
+    bid: float | None = None
+    ask: float | None = None
 
 
 class LiveSnapshotOut(CamelModel):
     symbol: str
     timeframe: str
-    analysis: ChartAnalysis
-    validation: TradeValidationResult
-    coach: CoachExplanationResult
-    multi_timeframe: MultiTimeframeConfirmation | None = None
+    price: float | None = None
+    bid: float | None = None
+    ask: float | None = None
     updated_at: datetime
+
+
+class OpenTradeAlert(CamelModel):
+    """Sprint 20 -- the repurposed Scanner's output: where live price
+    sits relative to an already-logged open trade's own SL/TP. Never a
+    verdict on whether the trade itself was a good idea."""
+
+    trade_id: str | None = None
+    pair: str | None = None
+    direction: str | None = None
+    entry: float | None = None
+    sl: float | None = None
+    tp: float | None = None
+    current_price: float | None = None
+    status: str  # "SL_HIT" | "TP_HIT" | "NEAR_SL" | "NEAR_TP" | "MONITORING"
+    needs_attention: bool
+    message: str
+
+
+class OpenTradeAlertsResponse(CamelModel):
+    alerts: list[OpenTradeAlert]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.live_snapshot import LiveSnapshot
@@ -20,6 +20,22 @@ class LiveSnapshotRepository:
                 LiveSnapshot.symbol == symbol,
                 LiveSnapshot.timeframe == timeframe,
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_for_symbol(self, user_id: int, symbol: str) -> LiveSnapshot | None:
+        """Sprint 20 -- the repurposed Scanner doesn't care which
+        timeframe an EA happens to be pushing a symbol on, only its
+        latest live price, so this ignores timeframe and returns
+        whichever row for this symbol was updated most recently.
+        Case-insensitive: trades store ``pair`` uppercased, but an EA
+        may push its ``symbol`` in whatever case the broker uses (e.g.
+        "GOLDmicro") -- that difference alone shouldn't hide an alert."""
+        result = await self.session.execute(
+            select(LiveSnapshot)
+            .where(LiveSnapshot.user_id == user_id, func.upper(LiveSnapshot.symbol) == symbol.upper())
+            .order_by(LiveSnapshot.updated_at.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 

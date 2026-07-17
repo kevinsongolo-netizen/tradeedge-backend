@@ -1,7 +1,16 @@
-"""API tests for the Chart Analysis Engine (``/api/v1/chart/*``,
-Sprint 10). Uses the same hand-verified bullish candle series as
-``tests/chart/test_candle_smc_engine.py`` so the expected trend/bias
-is known ground truth, not a guess."""
+"""API tests for the Chart Analysis Engine (``/api/v1/chart/*``).
+
+Sprint 10: Level-1-only reads (analyze-candles/analyze-image), using
+the same hand-verified bullish candle series as
+``tests/chart/test_candle_smc_engine.py`` so the expected trend/bias is
+known ground truth, not a guess.
+
+Sprint 20: the screenshot-first workflow's ``/full-analysis/image`` --
+reads a screenshot, compares it against the caller's own trade history,
+and must NEVER return a verdict (no tradeStatus/recommendation/VALID
+field anywhere), only an honest insight that degrades gracefully with
+thin history.
+"""
 import io
 
 from tests.chart.test_candle_smc_engine import _BULLISH_ROWS
@@ -18,6 +27,15 @@ _TINY_PNG = bytes.fromhex(
     "53de0000000c4944415478da6360000002000155a2415d0000000049454e44"
     "ae426082"
 )
+
+# PlaceholderVisionProvider (active whenever no ANTHROPIC_API_KEY is
+# set, i.e. in this test environment) always reads a screenshot as
+# this exact pair/direction -- see app/chart/vision_provider.py.
+_PLACEHOLDER_PAIR = "PLACEHOLDER — GOLDmicro (example data)"
+_PLACEHOLDER_TRADE = {
+    "date": "2026-01-01", "pair": _PLACEHOLDER_PAIR, "direction": "buy", "asset": "Metals",
+    "entry": 2400.0, "exit": 2410.0, "pnl": 50.0, "rr": 2.0, "session": "London",
+}
 
 
 def test_analyze_candles_returns_bullish_trend(client):
@@ -49,61 +67,52 @@ def test_analyze_image_rejects_unsupported_content_type(client):
     assert resp.status_code == 422, resp.text
 
 
-def test_full_analysis_image_returns_explicit_wait_not_classic_bias(client):
-    """The screenshot path only ever sees ONE chart, so it can't run
-    the dual-timeframe H4->M15 strategy -- it must return an honest,
-    clearly-explained WAIT rather than silently falling back to the
-    retired Classic Bias validator (which would make this the one
-    place in the app running a second, different strategy)."""
+def test_full_analysis_image_returns_extraction_and_insight_no_verdict(client):
+    """Sprint 20: the screenshot-first workflow's response must contain
+    the read setup (extraction) and a plain-language insight -- and
+    must NEVER contain a verdict field anywhere (tradeStatus,
+    recommendation, VALID/INVALID, TAKE/WAIT), since that decision
+    stays with the trader."""
     files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
     resp = client.post("/api/v1/chart/full-analysis/image", files=files)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["validation"]["tradeStatus"] == "INVALID"
-    assert body["validation"]["recommendation"] == "WAIT"
-    assert body["validation"]["confidence"] == 0
-    rule_statuses = {c["rule"]: c["status"] for c in body["validation"]["ruleChecks"]}
-    assert rule_statuses == {
-        "Daily Bias": "NOT_CHECKED",
-        "M15 Order Block/FVG": "NOT_CHECKED",
-        "Entry Timing (near end of zone)": "NOT_CHECKED",
-        "Add-On Entry (2nd position)": "NOT_CHECKED",
-    }
-    assert "one chart" in body["validation"]["reasonsFailed"][0]
-    assert body["coach"]["headline"] == "WAIT"
+
+    assert "extraction" in body and "insight" in body and "meta" in body
+    assert body["meta"]["isPlaceholder"] is True
+    assert body["extraction"]["pair"] == _PLACEHOLDER_PAIR
+
+    # No verdict anywhere in the response, at any nesting level.
+    serialized = str(body)
+    for forbidden in ("tradeStatus", "recommendation", "VALID", "INVALID", "TAKE", "WAIT"):
+        assert forbidden not in serialized
 
 
-def test_full_analysis_candles_end_to_end(client):
-    resp = client.post(
-        "/api/v1/chart/full-analysis/candles",
-        json={"candles": _CANDLES_PAYLOAD, "plannedRr": 3.0},
-    )
+def test_full_analysis_image_reports_thin_history_honestly(client):
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["analysis"]["trend"] == "Bullish"
-    assert body["validation"]["tradeStatus"] in ("VALID", "INVALID")
-    assert body["coach"]["headline"] in ("BUY ANALYSIS", "SELL ANALYSIS", "WAIT")
-    assert 0 <= body["coach"]["confidence"]["overall"] <= 100
+    insight = resp.json()["insight"]
+    assert insight["hasEnoughHistory"] is False
+    assert insight["sampleSize"] == 0
+    assert "Not enough logged trades" in insight["narrative"][0]
 
 
-def test_validate_endpoint_standalone(client):
-    analyze_resp = client.post("/api/v1/chart/analyze-candles", json={"candles": _CANDLES_PAYLOAD})
-    analysis = analyze_resp.json()["analysis"]
-    resp = client.post(
-        "/api/v1/chart/validate",
-        json={"analysis": analysis, "plannedRr": 3.0},
-    )
+def test_full_analysis_image_finds_similar_trades_once_history_exists(client):
+    for i in range(6):
+        client.post("/api/v1/trades", json={**_PLACEHOLDER_TRADE, "id": f"hist-{i}"})
+
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["tradeStatus"] in ("VALID", "INVALID")
+    insight = resp.json()["insight"]
+    assert insight["hasEnoughHistory"] is True
+    assert insight["sampleSize"] >= 1
+    assert insight["wins"] >= 1
+    assert len(insight["narrative"]) >= 1
 
 
-def test_coach_endpoint_standalone(client):
-    analyze_resp = client.post("/api/v1/chart/analyze-candles", json={"candles": _CANDLES_PAYLOAD})
-    analysis = analyze_resp.json()["analysis"]
-    validate_resp = client.post("/api/v1/chart/validate", json={"analysis": analysis, "plannedRr": 3.0})
-    validation = validate_resp.json()
-    resp = client.post("/api/v1/chart/coach", json={"analysis": analysis, "validation": validation})
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["headline"] in ("BUY ANALYSIS", "SELL ANALYSIS", "WAIT")
-    assert len(body["explanation"]) >= 1
+def test_full_analysis_image_rejects_unsupported_content_type(client):
+    files = {"file": ("chart.txt", io.BytesIO(b"not an image"), "text/plain")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
+    assert resp.status_code == 422, resp.text

@@ -1,13 +1,25 @@
-"""Pluggable vision AI provider (Chart Analysis Engine — Level 1,
-"screenshot" path).
+"""Pluggable vision AI provider (screenshot-first workflow, Sprint 20).
 
-Reading a chart *image* (as opposed to real OHLC numbers, see
-``candle_smc_engine.py``) requires a vision-capable AI model to look at
+Reading a chart *image* requires a vision-capable AI model to look at
 the picture and estimate what it shows. That's inherently a best-effort
-read — an AI is estimating trend/structure/order-blocks from pixels,
-not computing them from real prices — so this module is deliberately
-isolated behind one small interface (``VisionProvider``) that the rest
-of the app depends on, never on a specific AI vendor's SDK directly.
+read -- an AI is estimating trend/structure/order-blocks/prices from
+pixels, not computing them from real numbers -- so this module is
+deliberately isolated behind one small interface (``VisionProvider``)
+that the rest of the app depends on, never on a specific AI vendor's
+SDK directly.
+
+Sprint 20 rewrite: TradeEdge moved from a fixed, rule-based strategy
+(Daily Bias + M15 Order Block/FVG, no fixed SL/TP -- see
+``app/_legacy/`` for that engine, kept for reference/possible reuse)
+to a screenshot-first workflow. The user's own MT5 indicator already
+draws Order Blocks, FVGs, BOS, and CHoCH directly on the chart, and
+MT5's own order panel already shows the pending order's exact Entry,
+Stop Loss, Take Profit, and R:R -- so one annotated screenshot is a
+complete trade decision already made by the trader, not raw material
+for an AI to judge against rules. This provider's job changed from
+"read the chart so a rule engine can validate it" to "read everything
+visible -- structure AND the trader's own numbers -- so the app can
+compare this setup against the trader's own trade history instead."
 
 Two implementations ship today:
 
@@ -49,6 +61,19 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     "premiumDiscount": "Premium | Discount | Equilibrium",
     "bias": "BUY | SELL | NONE",
     "readConfidence": "0-100 int — how confident the model is in this visual read",
+    # --- Sprint 20: the trader's own trade decision, read off the
+    # screenshot's chart labels and MT5 order panel -- not re-derived
+    # or judged, just transcribed as precisely as possible.
+    "pair": "the traded symbol exactly as shown, e.g. 'XAUUSD' or 'GOLDmicro', or null if not visible",
+    "timeframe": "chart timeframe exactly as shown, e.g. 'M15', 'H1', or null if not visible",
+    "orderDirection": "BUY | SELL | null — from the pending order/position type (e.g. a Sell Limit or an open sell is SELL)",
+    "orderType": "free text, e.g. 'Sell Limit', 'Buy Stop', 'Market', or null if not visible",
+    "entry": "number or null — the entry/order price shown on the chart or order panel",
+    "stopLoss": "number or null — the stop loss price shown",
+    "takeProfit": "number or null — the take profit price shown",
+    "riskReward": "number or null — the R:R ratio if labeled directly, otherwise computed from entry/stopLoss/takeProfit if all three are present",
+    "lots": "number or null — position size if shown",
+    "poiType": "free text describing the point-of-interest label(s) touching the entry, e.g. 'Bearish Order Block' or 'Bullish FVG', or null",
 }
 
 
@@ -96,6 +121,16 @@ class PlaceholderVisionProvider(VisionProvider):
             "premiumDiscount": "Discount",
             "bias": "BUY",
             "readConfidence": 0,
+            "pair": "PLACEHOLDER — GOLDmicro (example data)",
+            "timeframe": "PLACEHOLDER — M15 (example data)",
+            "orderDirection": "BUY",
+            "orderType": "PLACEHOLDER — Buy Limit (example data)",
+            "entry": None,
+            "stopLoss": None,
+            "takeProfit": None,
+            "riskReward": None,
+            "lots": None,
+            "poiType": "PLACEHOLDER — Bullish Order Block (example data)",
             "provider": self.name,
             "isPlaceholder": True,
         }
@@ -115,18 +150,27 @@ class AnthropicVisionProvider(VisionProvider):
 
     def _prompt(self) -> str:
         return (
-            "You are a Smart Money Concepts (SMC) chart analyst. Look at this "
-            "forex/trading chart screenshot and identify: overall trend, market "
-            "structure, whether current price is inside an order block, resting "
+            "You are looking at a trader's own MT5 chart screenshot. Their own "
+            "indicator has already marked the chart's structure (order blocks, "
+            "fair value gaps, BOS, CHoCH, equal highs/lows), and MT5's own order "
+            "panel shows their actual pending order or open position with its "
+            "exact Entry, Stop Loss, Take Profit, and lot size. Your job is to "
+            "read what's already there as precisely as possible -- NOT to invent "
+            "a trade or judge whether it's good. Transcribe: overall trend, "
+            "market structure, whether price is inside an order block, resting "
             "liquidity (equal highs/lows), the most recent structural event (BOS "
-            "or CHOCH), fair value gap status, and whether price is in a premium "
-            "or discount zone relative to the visible range. "
+            "or CHOCH), fair value gap status, whether price is in a premium or "
+            "discount zone, the traded pair and chart timeframe as labeled, the "
+            "order/position type and direction, and the exact Entry/Stop Loss/"
+            "Take Profit/lot-size numbers from the order panel or chart labels. "
+            "If R:R isn't labeled directly, compute it from Entry/Stop Loss/Take "
+            "Profit when all three are readable. "
             "Respond with ONLY a JSON object with exactly these keys: "
             f"{json.dumps(VISION_ANALYSIS_SCHEMA_HINT)}. "
             "If you cannot confidently determine a field from the image, use "
-            "null for text fields, \"Ranging\" for trend/structure, \"NONE\" for "
-            "bias, and a low readConfidence. Do not include any text outside the "
-            "JSON object."
+            "null (for numeric or optional text fields), \"Ranging\" for "
+            "trend/structure, \"NONE\" for bias/orderDirection, and a low "
+            "readConfidence. Do not include any text outside the JSON object."
         )
 
     async def analyze_screenshot(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:

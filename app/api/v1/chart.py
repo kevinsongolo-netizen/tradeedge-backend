@@ -1,36 +1,36 @@
-"""Sprint 10 — Chart Analysis Engine router.
-
-Three levels, two Level-1 reading paths:
+"""Chart Analysis Engine router (Sprint 10; rewritten Sprint 20).
 
 * ``POST /chart/analyze-candles`` / ``POST /chart/analyze-image`` —
-  Level 1 only (structured chart read).
-* ``POST /chart/validate`` — Level 2 (trade validation) given an
-  already-produced ``ChartAnalysis``.
-* ``POST /chart/coach`` — Level 3 (AI coach explanation + confidence
-  breakdown) given an analysis + its validation result.
-* ``POST /chart/full-analysis/candles`` and
-  ``POST /chart/full-analysis/image`` — all three levels in one round
-  trip, which is what the UI calls for the common case.
+  Level 1 only (structured chart read, no verdict of any kind). Kept
+  as small generic utilities.
+* ``POST /chart/full-analysis/image`` — the screenshot-first workflow's
+  one call since Sprint 20: reads the screenshot (pair, timeframe,
+  entry/SL/TP/R:R, POI/BOS/CHoCH labels -- whatever the trader's own
+  MT5 indicator and order panel already show), then compares that
+  setup against the trader's own trade history via weighted similarity
+  (``app/engines/setup_insight_engine.py``). Returns the extracted
+  setup + a plain-language insight -- never a VALID/INVALID/TAKE/WAIT
+  verdict. That decision stays with the trader.
 
-No database/auth dependency — chart analyses are stateless in this
-first cut (see ``app/services/chart_service.py``).
+The old Level 2 (rule validation)/Level 3 (rule narration) endpoints
+(``/validate``, ``/coach``, ``/full-analysis/candles``) are retired
+along with the rule engines they depended on -- see ``app/_legacy/``.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import get_db_session
+from app.deps import get_current_user_id
 from app.errors import ValidationError
 from app.schemas.chart import (
     CandlesAnalyzeRequest,
     ChartAnalysis,
     ChartAnalysisResponse,
-    CoachExplanationResult,
-    CoachRequest,
-    FullCandlesAnalysisRequest,
-    FullChartAnalysisResponse,
-    MultiTimeframeConfirmation,
-    TradeValidationRequest,
-    TradeValidationResult,
+    ChartSetupInsightResponse,
+    SetupExtraction,
+    SetupInsight,
 )
 from app.services.chart_service import ChartService
 
@@ -69,108 +69,24 @@ async def analyze_image(file: UploadFile = File(...)) -> ChartAnalysisResponse:
 
 
 @router.post(
-    "/validate",
-    response_model=TradeValidationResult,
-    summary="Level 2 — validate a Level-1 analysis against SMC trading rules",
-)
-async def validate(body: TradeValidationRequest) -> TradeValidationResult:
-    service = ChartService()
-    result = service.validate(
-        body.analysis,
-        direction=body.direction,
-        planned_rr=body.planned_rr,
-        has_m15_bos=body.has_m15_bos,
-        has_m15_choch=body.has_m15_choch,
-        has_m15_entry_confirmation=body.has_m15_entry_confirmation,
-        has_liquidity_sweep=body.has_liquidity_sweep,
-        min_rr=body.min_rr,
-    )
-    return TradeValidationResult(**result)
-
-
-@router.post(
-    "/coach",
-    response_model=CoachExplanationResult,
-    summary="Level 3 — plain-language AI coach explanation + confidence breakdown",
-)
-async def coach(body: CoachRequest) -> CoachExplanationResult:
-    service = ChartService()
-    result = service.coach(body.analysis, body.validation.model_dump(by_alias=True), body.min_rr)
-    return CoachExplanationResult(**result)
-
-
-@router.post(
-    "/full-analysis/candles",
-    response_model=FullChartAnalysisResponse,
-    summary="Levels 1 + 2 + 3 in one call, from real OHLC candle data",
-)
-async def full_analysis_candles(body: FullCandlesAnalysisRequest) -> FullChartAnalysisResponse:
-    service = ChartService()
-    candles = [c.model_dump(by_alias=False) for c in body.candles]
-    m15_candles = (
-        [c.model_dump(by_alias=False) for c in body.m15_candles] if body.m15_candles else None
-    )
-    daily_candles = (
-        [c.model_dump(by_alias=False) for c in body.daily_candles] if body.daily_candles else None
-    )
-    result = await service.full_analysis_from_candles(
-        candles,
-        direction=body.direction,
-        planned_rr=body.planned_rr,
-        has_m15_bos=body.has_m15_bos,
-        has_m15_choch=body.has_m15_choch,
-        has_m15_entry_confirmation=body.has_m15_entry_confirmation,
-        has_liquidity_sweep=body.has_liquidity_sweep,
-        min_rr=body.min_rr,
-        m15_candles=m15_candles,
-        daily_candles=daily_candles,
-        open_trade_in_loss=body.open_trade_in_loss,
-    )
-    multi_timeframe = result.get("multi_timeframe")
-    return FullChartAnalysisResponse(
-        analysis=ChartAnalysis(**result["analysis"]),
-        validation=TradeValidationResult(**result["validation"]),
-        coach=CoachExplanationResult(**result["coach"]),
-        meta=result["meta"],
-        multi_timeframe=MultiTimeframeConfirmation(**multi_timeframe) if multi_timeframe else None,
-    )
-
-
-@router.post(
     "/full-analysis/image",
-    response_model=FullChartAnalysisResponse,
-    summary="Levels 1 + 2 + 3 in one call, from a chart screenshot",
+    response_model=ChartSetupInsightResponse,
+    summary="Screenshot-first workflow — read the setup, compare it against your own trade history",
 )
 async def full_analysis_image(
     file: UploadFile = File(...),
-    direction: str | None = Form(None),
-    planned_rr: float | None = Form(None),
-    has_m15_bos: bool = Form(False),
-    has_m15_choch: bool = Form(False),
-    has_m15_entry_confirmation: bool = Form(False),
-    has_liquidity_sweep: bool = Form(False),
-    min_rr: float = Form(2.0),
-) -> FullChartAnalysisResponse:
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> ChartSetupInsightResponse:
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise ValidationError(f"Unsupported image type: {file.content_type}. Use PNG, JPEG, or WEBP.")
     image_bytes = await file.read()
     if len(image_bytes) > MAX_IMAGE_BYTES:
         raise ValidationError("Image too large — please upload a screenshot under 8MB.")
-    service = ChartService()
-    result = await service.full_analysis_from_image(
-        image_bytes,
-        file.content_type,
-        direction=direction,
-        planned_rr=planned_rr,
-        has_m15_bos=has_m15_bos,
-        has_m15_choch=has_m15_choch,
-        has_m15_entry_confirmation=has_m15_entry_confirmation,
-        has_liquidity_sweep=has_liquidity_sweep,
-        min_rr=min_rr,
-    )
-    return FullChartAnalysisResponse(
-        analysis=ChartAnalysis(**result["analysis"]),
-        validation=TradeValidationResult(**result["validation"]),
-        coach=CoachExplanationResult(**result["coach"]),
+    service = ChartService(session)
+    result = await service.full_analysis_from_image(image_bytes, file.content_type, user_id=user_id)
+    return ChartSetupInsightResponse(
+        extraction=SetupExtraction(**result["extraction"]),
+        insight=SetupInsight(**result["insight"]),
         meta=result["meta"],
     )

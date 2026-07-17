@@ -36,6 +36,20 @@ async def test_placeholder_provider_rejects_empty_image():
         await provider.analyze_screenshot(b"", "image/png")
 
 
+@pytest.mark.asyncio
+async def test_placeholder_provider_includes_sprint20_setup_fields():
+    """Sprint 20: the vision provider now also reads the trader's own
+    pending order/position (pair, timeframe, direction, entry, SL, TP,
+    R:R, lots, POI type) off the screenshot, not just chart structure."""
+    provider = PlaceholderVisionProvider()
+    result = await provider.analyze_screenshot(b"fake-image-bytes", "image/png")
+    for key in (
+        "pair", "timeframe", "orderDirection", "orderType",
+        "entry", "stopLoss", "takeProfit", "riskReward", "lots", "poiType",
+    ):
+        assert key in result
+
+
 def test_factory_returns_placeholder_when_no_api_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     provider = get_vision_provider()

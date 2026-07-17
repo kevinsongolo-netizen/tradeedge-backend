@@ -1,13 +1,10 @@
-"""API tests for the Sprint 14 Live MT5 Feed (``/api/v1/live/*``).
-Reuses the hand-verified bullish candle series from
-``tests/chart/test_candle_smc_engine.py`` so the expected trend is
-known ground truth, not a guess."""
-from tests.chart.test_candle_smc_engine import _BULLISH_ROWS
+"""API tests for the Live MT5 Feed (``/api/v1/live/*``).
 
-_CANDLES_PAYLOAD = [
-    {"time": str(i), "open": o, "high": h, "low": l, "close": c}
-    for i, (o, h, l, c) in enumerate(_BULLISH_ROWS)
-]
+Sprint 20 -- simplified to price-only ingest (no more rule engine on
+every push, see app/_legacy/) plus the repurposed Scanner
+(``/live/open-trade-alerts``): live price vs. the trader's own logged
+open trades' SL/TP, never a verdict.
+"""
 
 
 def test_latest_returns_404_before_any_ingest(client):
@@ -19,39 +16,31 @@ def test_latest_returns_404_before_any_ingest(client):
 def test_ingest_then_latest_round_trip(client):
     ingest_resp = client.post(
         "/api/v1/live/ingest",
-        json={"symbol": "EURUSD", "timeframe": "H4", "candles": _CANDLES_PAYLOAD, "plannedRr": 3.0},
+        json={"symbol": "EURUSD", "timeframe": "H4", "price": 1.085, "bid": 1.0849, "ask": 1.0851},
     )
     assert ingest_resp.status_code == 200, ingest_resp.text
-    ingest_body = ingest_resp.json()
-    assert ingest_body["analysis"]["trend"] == "Bullish"
+    assert ingest_resp.json()["price"] == 1.085
 
     latest_resp = client.get("/api/v1/live/latest", params={"symbol": "EURUSD", "timeframe": "H4"})
     assert latest_resp.status_code == 200, latest_resp.text
     latest_body = latest_resp.json()
     assert latest_body["symbol"] == "EURUSD"
     assert latest_body["timeframe"] == "H4"
-    assert latest_body["analysis"]["trend"] == "Bullish"
+    assert latest_body["price"] == 1.085
+    assert latest_body["bid"] == 1.0849
     assert "updatedAt" in latest_body
 
 
 def test_ingest_upserts_same_symbol_timeframe(client):
-    client.post(
-        "/api/v1/live/ingest",
-        json={"symbol": "GBPUSD", "timeframe": "M15", "candles": _CANDLES_PAYLOAD},
-    )
-    client.post(
-        "/api/v1/live/ingest",
-        json={"symbol": "GBPUSD", "timeframe": "M15", "candles": _CANDLES_PAYLOAD},
-    )
+    client.post("/api/v1/live/ingest", json={"symbol": "GBPUSD", "timeframe": "M15", "price": 1.27})
+    client.post("/api/v1/live/ingest", json={"symbol": "GBPUSD", "timeframe": "M15", "price": 1.28})
     resp = client.get("/api/v1/live/latest", params={"symbol": "GBPUSD", "timeframe": "M15"})
     assert resp.status_code == 200, resp.text
+    assert resp.json()["price"] == 1.28
 
 
 def test_different_symbols_are_independent(client):
-    client.post(
-        "/api/v1/live/ingest",
-        json={"symbol": "BTCUSD", "timeframe": "H4", "candles": _CANDLES_PAYLOAD},
-    )
+    client.post("/api/v1/live/ingest", json={"symbol": "BTCUSD", "timeframe": "H4", "price": 60000})
     resp = client.get("/api/v1/live/latest", params={"symbol": "ETHUSD", "timeframe": "H4"})
     assert resp.status_code == 404, resp.text
 
@@ -59,90 +48,49 @@ def test_different_symbols_are_independent(client):
 def test_ingest_plain_format_for_mt5_ea(client):
     resp = client.post(
         "/api/v1/live/ingest?format=plain",
-        json={"symbol": "EURUSD", "timeframe": "H4", "candles": _CANDLES_PAYLOAD, "plannedRr": 3.0},
+        json={"symbol": "EURUSD", "timeframe": "H4", "price": 1.085},
     )
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"].startswith("text/plain")
     text = resp.text
-    assert "STATUS=" in text
-    assert "RECOMMENDATION=" in text
-    assert "HEADLINE=" in text
-    assert "CONFIDENCE=" in text
+    assert "SYMBOL=EURUSD" in text
+    assert "PRICE=1.085" in text
 
 
-def test_ingest_rejects_too_few_candles(client):
-    resp = client.post(
-        "/api/v1/live/ingest",
-        json={"symbol": "EURUSD", "timeframe": "H4", "candles": _CANDLES_PAYLOAD[:3]},
-    )
-    assert resp.status_code == 422, resp.text
-
-
-def test_latest_survives_old_shaped_stored_coach_confidence(client):
-    """Regression test for a real production bug: live_snapshots rows
-    persist the ``coach`` dict as raw JSON, so a row ingested before
-    ConfidenceBreakdown's fields were renamed (old trendAlignment/
-    poiQuality/liquidityQuality/bosQuality/chochQuality/fvgQuality/
-    rrQuality shape -- see app/chart/coach_explainer.py's history)
-    would otherwise 500 on every read until the EA happened to push a
-    fresh update for that exact symbol/timeframe. Simulates that old
-    row directly against the DB (bypassing ingest, which always writes
-    the current shape) and confirms /live/latest degrades gracefully
-    instead of crashing."""
-    import asyncio
-
-    from app.db.database import get_sessionmaker
-    from app.db.repositories.live_snapshot_repo import LiveSnapshotRepository
-
-    async def _seed_old_shaped_row():
-        session_factory = get_sessionmaker()
-        async with session_factory() as session:
-            repo = LiveSnapshotRepository(session)
-            await repo.upsert(
-                1,
-                "OLDSHAPE",
-                "H4",
-                {
-                    "analysis": {
-                        "source": "candles", "trend": "Bullish", "structure": "Bullish",
-                        "currentPriceContext": "test", "liquidity": "test", "latestEvent": None,
-                        "fvgStatus": None, "premiumDiscount": "Discount", "bias": "BUY",
-                        "confidence": 80, "zones": [], "entryZone": None, "notes": [], "isPlaceholder": False,
-                    },
-                    "validation": {
-                        "tradeStatus": "INVALID", "direction": None, "confidence": 0,
-                        "reasonsPassed": [], "reasonsFailed": ["old data"],
-                        "suggestedEntry": None, "stopLoss": None, "takeProfit": None,
-                        "riskReward": None, "recommendation": "WAIT",
-                        # NOTE: no "ruleChecks" key at all -- pre-dates that field too.
-                    },
-                    "coach": {
-                        "headline": "NO TRADE",
-                        "explanation": ["old narration"],
-                        "confidence": {
-                            "trendAlignment": 90, "poiQuality": 70, "liquidityQuality": 85,
-                            "bosQuality": 40, "chochQuality": 20, "fvgQuality": 70, "rrQuality": 30,
-                            "overall": 58,
-                        },
-                        "recommendation": "WAIT",
-                    },
-                    "multi_timeframe": None,
-                },
-            )
-            await session.commit()
-
-    asyncio.get_event_loop().run_until_complete(_seed_old_shaped_row())
-
-    resp = client.get("/api/v1/live/latest", params={"symbol": "OLDSHAPE", "timeframe": "H4"})
+def test_open_trade_alerts_empty_with_no_open_trades(client):
+    resp = client.get("/api/v1/live/open-trade-alerts")
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["validation"]["ruleChecks"] == []
-    breakdown = body["coach"]["confidence"]
-    assert breakdown["dailyBias"] == 0
-    assert breakdown["m15Poi"] == 0
-    assert breakdown["entryTiming"] == 0
-    assert breakdown["addOn"] == 0
-    # "overall" wasn't renamed between old and new shapes, so the old
-    # stored value survives untouched -- only the truly-renamed fields
-    # fall back to their 0 default.
-    assert breakdown["overall"] == 58
+    assert resp.json()["alerts"] == []
+
+
+def test_open_trade_alerts_flags_sl_hit_for_logged_open_trade(client):
+    client.post(
+        "/api/v1/trades",
+        json={
+            "id": "open-1", "pair": "GOLDmicro", "direction": "buy", "asset": "Metals",
+            "entry": 2400.0, "sl": 2390.0, "tp": 2420.0,
+            # No "exit" -- this is an open trade, not yet closed.
+        },
+    )
+    client.post("/api/v1/live/ingest", json={"symbol": "GOLDmicro", "timeframe": "M15", "price": 2389.0})
+
+    resp = client.get("/api/v1/live/open-trade-alerts")
+    assert resp.status_code == 200, resp.text
+    alerts = resp.json()["alerts"]
+    assert len(alerts) == 1
+    assert alerts[0]["tradeId"] == "open-1"
+    assert alerts[0]["status"] == "SL_HIT"
+    assert "tradeStatus" not in resp.text and "recommendation" not in resp.text
+
+
+def test_open_trade_alerts_ignores_closed_trades(client):
+    client.post(
+        "/api/v1/trades",
+        json={
+            "id": "closed-1", "pair": "GOLDmicro", "direction": "buy", "asset": "Metals",
+            "entry": 2400.0, "exit": 2420.0, "sl": 2390.0, "tp": 2420.0, "pnl": 200.0,
+        },
+    )
+    client.post("/api/v1/live/ingest", json={"symbol": "GOLDmicro", "timeframe": "M15", "price": 2389.0})
+    resp = client.get("/api/v1/live/open-trade-alerts")
+    assert resp.json()["alerts"] == []
