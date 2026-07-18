@@ -16,6 +16,7 @@ from app.engines.coach_deep_dive_engine import build_deep_dive
 from app.engines.coach_engine import generate_coach_insights
 from app.engines.mistake_engine import analyze_mistakes
 from app.engines.edge_pattern_engine import build_edge_patterns
+from app.engines.edge_profile_engine import build_edge_profile
 from app.engines.mentor_report_engine import build_mentor_report
 from app.engines.pattern_discovery_engine import build_discovered_patterns
 from app.engines.playbook_engine import build_playbook
@@ -73,6 +74,18 @@ class CoachService:
             return build_edge_patterns(entries)
 
         return await coach_cache.get_or_set(("edgePatterns", user_id), compute)
+
+    async def edge_profile(self, user_id: int) -> dict:
+        """Sprint 20 Phase 8 ("AI Learning Engine") -- comprehensive
+        whole-history characteristic discovery, no candidate setup.
+        See app/engines/edge_profile_engine.py's docstring."""
+        filters = StatsFilters()
+
+        async def compute() -> dict:
+            entries = await self.stats_service.raw_history(user_id, filters)
+            return build_edge_profile(entries)
+
+        return await coach_cache.get_or_set(("edgeProfile", user_id), compute)
 
     async def discovered_patterns(self, user_id: int) -> dict:
         """Sprint 20 Phase 6 -- "learn from my screenshots": standalone

@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.engines.characteristic_gap_engine import build_characteristic_gaps
+from app.engines.edge_profile_engine import build_edge_profile
 from app.engines.similar_engine import search_similar
 
 MIN_TOTAL_HISTORY_FOR_INSIGHT = 5
@@ -100,8 +101,40 @@ def candidate_from_vision_extraction(extraction: dict[str, Any]) -> dict[str, An
     # readable off the EXISTING fvgStatus free text (no new vision
     # field needed) -- the vision provider already writes prose like
     # "Bullish FVG mitigated" there when it can tell.
-    if "mitigat" in fvg_status.lower() or "fill" in fvg_status.lower():
+    fvg_status_lower = fvg_status.lower()
+    fvg_is_mitigated = ("mitigat" in fvg_status_lower or "fill" in fvg_status_lower) and "unmitigat" not in fvg_status_lower and "unfilled" not in fvg_status_lower
+    if fvg_is_mitigated:
         tags.append("Filled FVG")
+        # Sprint 20 Phase 8 -- "Mitigated FVG" is the exact phrase the
+        # trader used for this same concept in the AI Learning Engine
+        # request; pushed alongside "Filled FVG" so existing features
+        # (characteristic_gap_engine's _GOOD_BAD_TAG_PAIRS) keep working
+        # unchanged while the new edge_profile_engine can match the
+        # trader's own wording.
+        tags.append("Mitigated FVG")
+    elif "FVG" in tags:
+        # Present but not flagged mitigated/filled -- fresh by elimination.
+        tags.append("Fresh FVG")
+
+    # Sprint 20 Phase 8 ("AI Learning Engine") -- four more
+    # characteristics the trader listed among the full set to learn
+    # from. Same tag-on-m15Confirmations mechanism as everything above.
+    if extraction.get("equalHighsNearby") is True:
+        tags.append("Equal Highs Nearby")
+    if extraction.get("equalLowsNearby") is True:
+        tags.append("Equal Lows Nearby")
+    bos_type = (extraction.get("bosType") or "").strip().lower()
+    if bos_type == "internal":
+        tags.append("Internal BOS")
+    elif bos_type == "external":
+        tags.append("External BOS")
+    touch_number = (extraction.get("touchNumber") or "").strip().lower()
+    if touch_number == "first":
+        tags.append("First Touch")
+    elif touch_number == "second":
+        tags.append("Second Touch")
+    elif touch_number in ("third+", "third"):
+        tags.append("Third+ Touch")
 
     return {
         "pair": extraction.get("pair"),
@@ -589,6 +622,17 @@ def build_setup_insight(
     # similar LOSSES to draw an honest loser-echo from (or vice versa).
     characteristic_gaps = build_characteristic_gaps(candidate, similar)
 
+    # Sprint 20 Phase 8 -- "AI Learning Engine": comprehensive
+    # whole-history characteristic discovery (every structural tag,
+    # session, zone, trend value) ranked for winners and losers, then
+    # compared against this specific candidate -- "this setup matches N
+    # of your winning characteristics, M of your losing characteristics."
+    # Uses the FULL history param (not the similarity-filtered `similar`
+    # list above) since this is about the trader's whole edge, not just
+    # setups that resemble this one. Gated on its own >=3/>=3 honesty
+    # bar inside build_edge_profile, independent of low_confidence.
+    edge_profile = build_edge_profile(history, candidate)
+
     return {
         "hasEnoughHistory": True,
         "totalHistoryCount": total_history_count,
@@ -605,4 +649,5 @@ def build_setup_insight(
         "lowConfidence": low_confidence,
         "characteristicGaps": characteristic_gaps,
         "confidenceExplanation": confidence_explanation,
+        "edgeProfile": edge_profile,
     }

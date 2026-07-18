@@ -60,6 +60,16 @@ async def test_placeholder_provider_includes_sprint20_phase6_characteristics():
         assert key in result
 
 
+@pytest.mark.asyncio
+async def test_placeholder_provider_includes_sprint20_phase8_characteristics():
+    """Sprint 20 Phase 8 ("AI Learning Engine") -- equal highs/lows,
+    BOS type, and touch number."""
+    provider = PlaceholderVisionProvider()
+    result = await provider.analyze_screenshot(b"fake-image-bytes", "image/png")
+    for key in ("equalHighsNearby", "equalLowsNearby", "bosType", "touchNumber"):
+        assert key in result
+
+
 def test_factory_returns_placeholder_when_no_api_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     provider = get_vision_provider()

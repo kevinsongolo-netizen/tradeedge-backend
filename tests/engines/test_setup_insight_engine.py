@@ -69,6 +69,37 @@ def test_candidate_from_vision_extraction_maps_phase6_characteristics():
     assert "Large FVG" not in mitigated["m15Confirmations"]
 
 
+def test_candidate_from_vision_extraction_maps_phase8_characteristics():
+    """Sprint 20 Phase 8 ("AI Learning Engine") -- equal highs/lows, BOS
+    type, and touch number all become tags, plus Fresh/Mitigated FVG."""
+    fresh_fvg = candidate_from_vision_extraction({
+        "fvgStatus": "Bullish FVG unmitigated",
+        "equalHighsNearby": True,
+        "equalLowsNearby": False,
+        "bosType": "External",
+        "touchNumber": "First",
+    })
+    assert "Fresh FVG" in fresh_fvg["m15Confirmations"]
+    assert "Equal Highs Nearby" in fresh_fvg["m15Confirmations"]
+    assert "Equal Lows Nearby" not in fresh_fvg["m15Confirmations"]
+    assert "External BOS" in fresh_fvg["m15Confirmations"]
+    assert "First Touch" in fresh_fvg["m15Confirmations"]
+
+    mitigated_fvg = candidate_from_vision_extraction({
+        "fvgStatus": "Bearish FVG mitigated",
+        "bosType": "Internal",
+        "touchNumber": "Second",
+    })
+    assert "Mitigated FVG" in mitigated_fvg["m15Confirmations"]
+    assert "Filled FVG" in mitigated_fvg["m15Confirmations"]
+    assert "Fresh FVG" not in mitigated_fvg["m15Confirmations"]
+    assert "Internal BOS" in mitigated_fvg["m15Confirmations"]
+    assert "Second Touch" in mitigated_fvg["m15Confirmations"]
+
+    third_touch = candidate_from_vision_extraction({"touchNumber": "Third+"})
+    assert "Third+ Touch" in third_touch["m15Confirmations"]
+
+
 def test_insufficient_history_returns_honest_message_not_a_fake_result():
     candidate = {"pair": "GOLDmicro", "direction": "sell", "rr": 1.8}
     thin_history = [{"id": "1", "pair": "GOLDmicro", "direction": "sell", "pnl": 10}]
@@ -496,3 +527,32 @@ def test_improvement_suggestions_reuse_winner_checklist_missing_rows(history):
     assert any("London Session" in s for s in suggestions)
     assert any("Liquidity Sweep" in s for s in suggestions)
     assert all(s.startswith("Wait for:") for s in suggestions)
+
+
+def test_build_setup_insight_includes_edge_profile(history):
+    """Sprint 20 Phase 8 -- "AI Learning Engine": build_setup_insight
+    must surface the whole-history characteristic discovery (edge
+    profile), computed from the FULL history (not just the similar
+    subset), and compare it against the candidate."""
+    reference = history[0]
+    candidate = dict(reference)
+    candidate["id"] = "brand-new-candidate"
+    insight = build_setup_insight(candidate, history)
+    assert "edgeProfile" in insight
+    profile = insight["edgeProfile"]
+    assert profile is not None
+    assert profile["hasEnoughData"] is True
+    assert "winnerCharacteristics" in profile and "loserCharacteristics" in profile
+    assert "winnerMatchCount" in profile and "winnerMatches" in profile
+    assert "loserMatchCount" in profile and "loserMatches" in profile
+    assert profile["winnerMatchTotal"] == len(profile["winnerCharacteristics"])
+    assert profile["loserMatchTotal"] == len(profile["loserCharacteristics"])
+
+
+def test_edge_profile_absent_when_thin_total_history():
+    """When there isn't even enough TOTAL history yet, edgeProfile is
+    never attempted (matches characteristicGaps' own convention)."""
+    candidate = {"pair": "GOLDmicro", "direction": "sell", "rr": 1.8}
+    thin_history = [{"id": "1", "pair": "GOLDmicro", "direction": "sell", "pnl": 10}]
+    insight = build_setup_insight(candidate, thin_history)
+    assert "edgeProfile" not in insight or insight.get("edgeProfile") is None

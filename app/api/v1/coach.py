@@ -12,6 +12,7 @@ from app.schemas.coach import (
     CoachInsightsResponse,
     DiscoveredPatternsResponse,
     EdgePatternsResponse,
+    EdgeProfileResponse,
     MentorReportResponse,
     PlaybookResponse,
     TradeReviewRequest,
@@ -88,6 +89,25 @@ async def coach_edge_patterns(
     service = CoachService(session)
     result = await service.edge_patterns(user_id)
     return EdgePatternsResponse(**result)
+
+
+@router.get(
+    "/edge-profile",
+    response_model=EdgeProfileResponse,
+    summary="Sprint 20 Phase 8 — AI Learning Engine: comprehensive whole-history characteristic discovery",
+)
+async def coach_edge_profile(
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> EdgeProfileResponse:
+    """"What made my winning trades different?" -- ranks EVERY
+    characteristic (structural tags, session, zone, trend, ...)
+    independently by how common it is within winners and within
+    losers, not just the ones that happen to separate the two. See
+    app/engines/edge_profile_engine.py's docstring."""
+    service = CoachService(session)
+    result = await service.edge_profile(user_id)
+    return EdgeProfileResponse(**result)
 
 
 @router.get(

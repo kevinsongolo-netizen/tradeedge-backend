@@ -373,6 +373,46 @@ class CharacteristicGaps(CamelModel):
     improvement_suggestions: list[str] = Field(default_factory=list)
 
 
+class EdgeCharacteristicRow(CamelModel):
+    """Sprint 20 Phase 8 -- one row of the ranked "what do my winners/
+    losers usually have" list: a characteristic label (a structural
+    tag, a session/zone/trend value, ...) and its share (0-100) of the
+    winning or losing sample it was ranked within. See
+    ``app/engines/edge_profile_engine.py``."""
+
+    label: str
+    share: float = 0.0
+
+
+class EdgeProfile(CamelModel):
+    """Sprint 20 Phase 8 -- "AI Learning Engine": the comprehensive,
+    whole-history characteristic discovery (every structural tag,
+    session, zone, trend value -- not just a hand-picked few) ranked
+    independently for winners and for losers, plus -- when embedded in
+    a ``SetupInsight`` alongside a live candidate setup -- how many of
+    each discovered profile the current screenshot actually matches.
+    Never a verdict: purely "this setup matches N of your winning
+    characteristics and M of your losing characteristics," with the
+    matched labels listed so the trader can see exactly which ones.
+    See ``app/engines/edge_profile_engine.py``."""
+
+    has_enough_data: bool
+    winning_trade_count: int
+    losing_trade_count: int
+    winner_characteristics: list[EdgeCharacteristicRow] = Field(default_factory=list)
+    loser_characteristics: list[EdgeCharacteristicRow] = Field(default_factory=list)
+    # Populated only when a candidate setup was supplied (i.e. always,
+    # when embedded in SetupInsight) -- how many of the discovered
+    # characteristics on each side this specific setup matches, and
+    # which ones by name.
+    winner_match_count: int = 0
+    winner_match_total: int = 0
+    winner_matches: list[str] = Field(default_factory=list)
+    loser_match_count: int = 0
+    loser_match_total: int = 0
+    loser_matches: list[str] = Field(default_factory=list)
+
+
 class SetupInsight(CamelModel):
     """The "have I seen this before, and how did it go?" result --
     never a verdict. See ``app/engines/setup_insight_engine.py``."""
@@ -401,6 +441,11 @@ class SetupInsight(CamelModel):
     # breakeven split), instead of just a bare small number. Empty
     # whenever low_confidence is false.
     confidence_explanation: list[str] = Field(default_factory=list)
+    # Sprint 20 Phase 8 -- "AI Learning Engine": whole-history
+    # characteristic discovery compared against this specific candidate
+    # setup. None whenever there isn't enough winner+loser history yet
+    # (same >=3/>=3 bar as everywhere else in this file).
+    edge_profile: EdgeProfile | None = None
 
 
 class ChartSetupInsightResponse(CamelModel):

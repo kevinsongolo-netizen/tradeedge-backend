@@ -43,6 +43,13 @@ asked the AI to learn from (fresh vs. mitigated zones, rejection candle
 strength, FVG size) that a vision read can estimate the same way it
 already estimates trend/structure/POI type, but weren't captured at
 all before this phase.
+
+Sprint 20 Phase 8 ("AI Learning Engine") -- added ``equalHighsNearby``/
+``equalLowsNearby``/``bosType``/``touchNumber``: four more
+characteristics the trader listed among the full set they want the AI
+learning from every screenshot -- feeding
+``app/engines/edge_profile_engine.py``'s comprehensive winner/loser
+characteristic discovery, not just the earlier hand-picked dimensions.
 """
 from __future__ import annotations
 
@@ -88,6 +95,14 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     "orderBlockFreshness": "Fresh | Mitigated | null -- has price already traded back into the order block/FVG the entry is based on before this entry (Mitigated), or is it untouched since it formed (Fresh)?",
     "rejectionStrength": "Strong | Weak | None | null -- how strongly price rejected from the entry zone (a long wick/strong reversal candle = Strong, a weak indecisive candle = Weak, no clear rejection yet = None)",
     "fvgSize": "Large | Medium | Small | null -- the fair value gap's size relative to recent candles, if one is visible",
+    # --- Sprint 20 Phase 8 ("AI Learning Engine") -- four more
+    # characteristics the trader specifically listed as things to learn
+    # from, that a vision model can estimate the same way it already
+    # estimates freshness/rejection/FVG size above.
+    "equalHighsNearby": "true | false | null -- are there visible equal highs (resting liquidity) near price?",
+    "equalLowsNearby": "true | false | null -- are there visible equal lows (resting liquidity) near price?",
+    "bosType": "Internal | External | null -- if a break of structure is marked, is it an internal (minor swing) or external (major swing) BOS?",
+    "touchNumber": "First | Second | Third+ | null -- is this the first, second, or third-or-later time price has touched the order block/FVG the entry is based on?",
 }
 
 
@@ -148,6 +163,10 @@ class PlaceholderVisionProvider(VisionProvider):
             "orderBlockFreshness": "Fresh",
             "rejectionStrength": "Strong",
             "fvgSize": "Medium",
+            "equalHighsNearby": True,
+            "equalLowsNearby": False,
+            "bosType": "External",
+            "touchNumber": "First",
             "numberConsistencyWarning": None,
             "provider": self.name,
             "isPlaceholder": True,
@@ -266,8 +285,12 @@ class AnthropicVisionProvider(VisionProvider):
             "block/FVG the entry is based on has already been retested before "
             "this entry (mitigated) or is still untouched (fresh), how strongly "
             "price rejected from the entry zone (a long reversal wick vs. a weak "
-            "indecisive candle vs. no clear rejection), and the fair value gap's "
-            "size relative to recent candles if one is visible. "
+            "indecisive candle vs. no clear rejection), the fair value gap's "
+            "size relative to recent candles if one is visible, whether visible "
+            "equal highs or equal lows sit near price, whether a marked BOS is "
+            "an internal (minor swing) or external (major swing) break, and "
+            "whether this is the first, second, or third-or-later time price "
+            "has touched the order block/FVG. "
             "Respond with ONLY a JSON object with exactly these keys: "
             f"{json.dumps(VISION_ANALYSIS_SCHEMA_HINT)}. "
             "If you cannot confidently determine a field from the image, use "

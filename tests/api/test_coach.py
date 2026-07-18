@@ -276,3 +276,42 @@ def test_mentor_report_month_period_surfaces_stats(client):
     assert body["period"] == "month"
     assert body["hasEnoughData"] is True
     assert body["periodSampleSize"] == 5
+
+
+# --- GET /coach/edge-profile (Sprint 20 Phase 8) -------------------------------
+
+def test_edge_profile_empty_with_no_trades(client):
+    resp = client.get("/api/v1/coach/edge-profile")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["hasEnoughData"] is False
+    assert body["winnerCharacteristics"] == []
+
+
+def test_edge_profile_ranks_characteristics_from_history(client):
+    for i in range(4):
+        client.post(
+            "/api/v1/trades",
+            json={
+                "id": f"edgeprofile-w{i}", "date": f"2026-04-0{i + 1}", "session": "London",
+                "m15Confirmations": ["Fresh Order Block"], "pnl": 40.0,
+            },
+        )
+    for i in range(4):
+        client.post(
+            "/api/v1/trades",
+            json={
+                "id": f"edgeprofile-l{i}", "date": f"2026-04-1{i + 1}", "session": "Asian",
+                "m15Confirmations": ["Mitigated Order Block"], "pnl": -20.0,
+            },
+        )
+    resp = client.get("/api/v1/coach/edge-profile")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["hasEnoughData"] is True
+    winner_labels = {c["label"] for c in body["winnerCharacteristics"]}
+    loser_labels = {c["label"] for c in body["loserCharacteristics"]}
+    assert "Fresh Order Block" in winner_labels
+    assert "London" in winner_labels
+    assert "Mitigated Order Block" in loser_labels
+    assert "Asian" in loser_labels

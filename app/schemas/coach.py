@@ -138,6 +138,31 @@ class MentorReportResponse(CamelModel):
     loser_characteristic: str | None = None
 
 
+class EdgeCharacteristicRow(CamelModel):
+    """Sprint 20 Phase 8 ("AI Learning Engine") -- one ranked
+    characteristic (any kind: structural tag, session, zone, trend, ...)
+    and what share of that side (winners or losers) actually has it.
+    See app/engines/edge_profile_engine.py."""
+
+    label: str
+    share: float
+
+
+class EdgeProfileResponse(CamelModel):
+    """Sprint 20 Phase 8 -- comprehensive, whole-history characteristic
+    discovery: "what made my winning trades different?" Not filtered to
+    only the characteristics that separate winners from losers (see
+    DiscoveredPatternsResponse for that narrower comparison) -- every
+    characteristic that clears MIN_CHARACTERISTIC_SUPPORT on a side is
+    ranked and shown, independently per side."""
+
+    has_enough_data: bool = False
+    winning_trade_count: int = 0
+    losing_trade_count: int = 0
+    winner_characteristics: list[EdgeCharacteristicRow] = Field(default_factory=list)
+    loser_characteristics: list[EdgeCharacteristicRow] = Field(default_factory=list)
+
+
 class DiscoveredPatternsResponse(CamelModel):
     """Sprint 20 Phase 6 -- "learn from my screenshots": standalone
     narrative statements about what separates this trader's own
