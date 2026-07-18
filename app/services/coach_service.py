@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engines.coach_deep_dive_engine import build_deep_dive
 from app.engines.coach_engine import generate_coach_insights
 from app.engines.mistake_engine import analyze_mistakes
+from app.engines.playbook_engine import build_playbook
 from app.engines.setup_engine import analyze_setups
 from app.engines.statistics_engine import compute_statistics
 from app.engines.strategy_health_engine import compute_strategy_health
@@ -38,6 +39,21 @@ class CoachService:
             return generate_coach_insights(entries, calculated)[:limit]
 
         return await coach_cache.get_or_set(("insights", user_id, limit), compute)
+
+    async def playbook(self, user_id: int) -> dict:
+        """Sprint 20 Phase 3 #6 -- "My Best Setups": per-POI-type win
+        rate/R:R/best session/best day/example screenshots, ranked
+        purely from this trader's own logged history (see
+        app/engines/playbook_engine.py's docstring for what's
+        deliberately NOT included yet -- average holding time has no
+        underlying data to compute from)."""
+        filters = StatsFilters()
+
+        async def compute() -> dict:
+            entries = await self.stats_service.raw_history(user_id, filters)
+            return build_playbook(entries)
+
+        return await coach_cache.get_or_set(("playbook", user_id), compute)
 
     async def deep_dive(self, user_id: int) -> dict:
         """Sprint 8 Phase 6 — ``GET /coach/deep-dive``. Same cached

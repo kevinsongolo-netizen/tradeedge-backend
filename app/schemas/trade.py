@@ -10,10 +10,26 @@ and ``validate_row``), not a schema-level one.
 from __future__ import annotations
 
 from datetime import date as date_, datetime
+from typing import Literal
 
 from pydantic import Field
 
+from app.schemas.chart import SetupInsight
 from app.schemas.common import CamelModel
+
+
+class TradeScreenshot(CamelModel):
+    """One screenshot attached to a trade (Sprint 20 Phase 3). ``kind``
+    distinguishes the pre-entry chart read from an optional post-exit
+    "how it actually played out" shot -- ``url`` is a permanent,
+    publicly-fetchable URL (Cloudinary today, see
+    ``app/media/image_storage.py``); a trade logged before screenshot
+    storage was configured (or logged with no image at all) simply has
+    an empty ``screenshots`` list, never a fake/broken URL."""
+
+    url: str
+    kind: Literal["entry", "exit"] = "entry"
+    uploaded_at: datetime | None = None
 
 
 class TradeBase(CamelModel):
@@ -48,7 +64,7 @@ class TradeBase(CamelModel):
     failed: str | None = None
     worked_tags: list[str] = Field(default_factory=list)
     failed_tags: list[str] = Field(default_factory=list)
-    screenshots: list[str] = Field(default_factory=list)
+    screenshots: list[TradeScreenshot] = Field(default_factory=list)
 
     def to_model_kwargs(self) -> dict:
         """Maps this schema's fields onto ``Trade`` ORM attribute names
@@ -63,6 +79,14 @@ class TradeBase(CamelModel):
             data["exit_price"] = data.pop("exit")
         if "pair" in data and data["pair"]:
             data["pair"] = str(data["pair"]).upper()
+        if "screenshots" in data:
+            # JSON columns need plain, iso-string-safe values -- model_dump()
+            # already recurses TradeScreenshot into plain dicts, but leaves
+            # uploaded_at as a real datetime, which most JSON encoders choke
+            # on when the ORM eventually serializes this column.
+            for shot in data["screenshots"]:
+                if isinstance(shot.get("uploaded_at"), (date_, datetime)):
+                    shot["uploaded_at"] = shot["uploaded_at"].isoformat()
         return data
 
     def to_candidate_dict(self) -> dict:
@@ -156,3 +180,29 @@ class DeleteAllTradesResult(CamelModel):
     request)."""
 
     deleted_count: int
+
+
+class TradeLessonSummary(CamelModel):
+    """The planned-vs-actual comparison for one already-saved, closed
+    trade (see ``app/engines/trade_lesson_engine.py``) -- the same
+    engine ``POST /coach/review-trade`` uses, just scoped to a trade
+    already in the database instead of one supplied fresh in the
+    request body."""
+
+    outcome: str
+    has_enough_history: bool
+    sample_size: int
+    wins: int
+    losses: int
+    lessons: list[str] = Field(default_factory=list)
+    patterns: list[str] = Field(default_factory=list)
+
+
+class TradeDetailInsight(CamelModel):
+    """Response for ``GET /trades/{id}/insight`` (Sprint 20 Phase 3) --
+    the "Most Similar Trades" + "what changed vs my plan" sections for
+    the trade detail view. ``lesson`` is ``None`` for a still-open trade
+    (no exit price yet to compare a plan against)."""
+
+    insight: SetupInsight
+    lesson: TradeLessonSummary | None = None

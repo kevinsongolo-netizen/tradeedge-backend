@@ -10,6 +10,7 @@ from app.deps import get_current_user_id
 from app.schemas.coach import (
     CoachDeepDive,
     CoachInsightsResponse,
+    PlaybookResponse,
     TradeReviewRequest,
     TradeReviewResult,
 )
@@ -46,6 +47,24 @@ async def coach_deep_dive(
     service = CoachService(session)
     result = await service.deep_dive(user_id)
     return CoachDeepDive(**result)
+
+
+@router.get(
+    "/playbook",
+    response_model=PlaybookResponse,
+    summary="Sprint 20 Phase 3 — My Best Setups (per-POI-type win rate, R:R, best session/day, example screenshots)",
+)
+async def coach_playbook(
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> PlaybookResponse:
+    """Ranked purely from this trader's own logged history -- never a
+    fixed "good setup" list. A POI type only appears once it's been
+    logged enough times to mean something (see
+    app/engines/playbook_engine.py's PLAYBOOK_MIN_SAMPLE)."""
+    service = CoachService(session)
+    result = await service.playbook(user_id)
+    return PlaybookResponse(**result)
 
 
 @router.post(

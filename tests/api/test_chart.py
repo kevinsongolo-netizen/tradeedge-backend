@@ -119,3 +119,33 @@ def test_full_analysis_image_rejects_unsupported_content_type(client):
     files = {"file": ("chart.txt", io.BytesIO(b"not an image"), "text/plain")}
     resp = client.post("/api/v1/chart/full-analysis/image", files=files)
     assert resp.status_code == 422, resp.text
+
+
+# --- Sprint 20 Phase 3 -- plain screenshot upload (no vision analysis) ----
+
+
+def test_upload_screenshot_returns_null_url_when_no_storage_configured(client):
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/upload-screenshot", files=files)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["url"] is None
+    assert body["isPlaceholder"] is True
+    assert body["error"] is None
+
+
+def test_upload_screenshot_rejects_oversized_and_wrong_type_same_as_analysis(client):
+    files = {"file": ("chart.txt", io.BytesIO(b"not an image"), "text/plain")}
+    resp = client.post("/api/v1/chart/upload-screenshot", files=files)
+    assert resp.status_code == 422
+
+
+def test_full_analysis_image_meta_includes_screenshot_url_field(client):
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
+    assert resp.status_code == 200, resp.text
+    meta = resp.json()["meta"]
+    assert "screenshotUrl" in meta
+    # No Cloudinary credentials configured in the test environment --
+    # honestly None, never a fake URL.
+    assert meta["screenshotUrl"] is None

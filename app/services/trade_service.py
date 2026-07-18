@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.trade import Trade
 from app.db.repositories.analysis_repo import AnalysisRepository
 from app.db.repositories.trade_repo import TradeRepository
+from app.engines.setup_insight_engine import build_setup_insight
+from app.engines.trade_lesson_engine import build_trade_lesson
 from app.errors import NotFoundError
 from app.services.ai_service import AIService
 from app.services.cache import coach_cache, stats_cache
@@ -157,6 +159,32 @@ class TradeService:
         await self._invalidate_caches(user_id)
         await self.session.commit()
         return count
+
+    async def get_trade_detail_insight(self, user_id: int, trade_id: str) -> dict[str, Any]:
+        """Sprint 20 Phase 3 -- "Most Similar Trades" + "what changed
+        vs my plan" for an ALREADY-SAVED journal trade, for the trade
+        detail view. Reuses the exact same engines
+        ``ChartService.full_analysis_from_image`` (live, not-yet-saved
+        candidate) and ``TradeReviewService.review`` (client-supplied
+        body) use, so "similar" and "lesson" mean the same thing
+        everywhere in the app -- this is just a third entry point into
+        them, scoped to a trade that's already in the database."""
+        trade = await self.trade_repo.get(user_id, trade_id)
+        if trade is None:
+            raise NotFoundError(f"Trade {trade_id} not found")
+        candidate = trade.to_engine_dict()
+        history = [
+            t.to_engine_dict() for t in await self.trade_repo.list_all(user_id) if t.id != trade_id
+        ]
+
+        insight = build_setup_insight(candidate, history)
+
+        lesson = None
+        if candidate.get("exit") is not None:
+            weights = await self.ai_service.get_weights(user_id)
+            lesson = build_trade_lesson(candidate, history, weights=weights["similarity"])
+
+        return {"insight": insight, "lesson": lesson}
 
     async def bulk_upsert(self, user_id: int, items: list[dict[str, Any]]) -> dict[str, Any]:
         """bulk_upsert(user_id, items) — used by ``POST /trades/bulk``

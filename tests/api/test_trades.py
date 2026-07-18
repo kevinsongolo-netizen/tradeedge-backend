@@ -230,3 +230,77 @@ def test_delete_all_on_empty_journal_returns_zero(client):
     resp = client.delete("/api/v1/trades", params={"confirm": "DELETE ALL MY TRADES"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["deletedCount"] == 0
+
+
+# --- Sprint 20 Phase 3 -- screenshots + trade detail insight ---------------
+
+
+def test_create_trade_with_structured_screenshots_round_trips(client):
+    payload = {
+        **SAMPLE,
+        "id": "trade-screenshots",
+        "screenshots": [
+            {"url": "https://res.cloudinary.com/demo/image/upload/v1/tradeedge/entry.png", "kind": "entry"},
+            {"url": "https://res.cloudinary.com/demo/image/upload/v1/tradeedge/exit.png", "kind": "exit"},
+        ],
+    }
+    resp = client.post("/api/v1/trades", json=payload)
+    assert resp.status_code == 201, resp.text
+    shots = resp.json()["screenshots"]
+    assert len(shots) == 2
+    assert shots[0]["kind"] == "entry"
+    assert shots[1]["kind"] == "exit"
+
+    fetched = client.get("/api/v1/trades/trade-screenshots").json()
+    assert len(fetched["screenshots"]) == 2
+
+
+def test_trade_screenshots_default_to_empty_list_when_omitted(client):
+    payload = {**SAMPLE, "id": "trade-no-screenshots"}
+    resp = client.post("/api/v1/trades", json=payload)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["screenshots"] == []
+
+
+def test_trade_detail_insight_404s_for_unknown_trade(client):
+    resp = client.get("/api/v1/trades/does-not-exist/insight")
+    assert resp.status_code == 404
+
+
+def test_trade_detail_insight_has_no_lesson_for_a_still_open_trade(client):
+    open_trade = {**SAMPLE, "id": "trade-open"}
+    del open_trade["exit"]
+    resp = client.post("/api/v1/trades", json=open_trade)
+    assert resp.status_code == 201, resp.text
+
+    insight_resp = client.get("/api/v1/trades/trade-open/insight")
+    assert insight_resp.status_code == 200, insight_resp.text
+    body = insight_resp.json()
+    assert body["lesson"] is None
+    assert "insight" in body
+    assert "narrative" in body["insight"]
+
+
+def test_trade_detail_insight_has_a_lesson_for_a_closed_trade(client):
+    resp = client.post("/api/v1/trades", json={**SAMPLE, "id": "trade-closed"})
+    assert resp.status_code == 201, resp.text
+
+    insight_resp = client.get("/api/v1/trades/trade-closed/insight")
+    assert insight_resp.status_code == 200, insight_resp.text
+    body = insight_resp.json()
+    assert body["lesson"] is not None
+    assert body["lesson"]["outcome"] in ("Win", "Loss", "Breakeven", "Unknown")
+    assert "lessons" in body["lesson"]
+
+
+def test_trade_detail_insight_excludes_the_trade_itself_from_its_own_history(client):
+    # A trade can't be "similar to itself" -- similarity search must
+    # exclude the candidate's own id from the history it's compared
+    # against (regression coverage for the shared search_similar id check).
+    resp = client.post("/api/v1/trades", json={**SAMPLE, "id": "trade-self-exclude"})
+    assert resp.status_code == 201, resp.text
+
+    insight_resp = client.get("/api/v1/trades/trade-self-exclude/insight")
+    assert insight_resp.status_code == 200, insight_resp.text
+    for top in insight_resp.json()["insight"]["topSimilar"]:
+        assert top["id"] != "trade-self-exclude"

@@ -111,3 +111,52 @@ def test_coach_deep_dive_is_a_valid_shape_for_dimension_stats(client):
         if row is not None:
             for key in ("key", "count", "wins", "losses", "breakeven", "winRate", "expectancy", "totalPnl", "confident"):
                 assert key in row, f"{field} missing {key}"
+
+
+# --- GET /coach/playbook (Sprint 20 Phase 3 #6) --------------------------------
+
+
+def test_playbook_empty_with_no_trades(client):
+    resp = client.get("/api/v1/coach/playbook")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["setups"] == []
+    assert body["sampleSize"] == 0
+
+
+def test_playbook_excludes_thin_poi_groups(client):
+    client.post(
+        "/api/v1/trades",
+        json={"id": "pb1", "date": "2026-01-01", "pair": "EURUSD", "h4PoiType": "Bullish OB", "pnl": 10.0},
+    )
+    resp = client.get("/api/v1/coach/playbook")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["setups"] == []
+
+
+def test_playbook_surfaces_a_setup_with_enough_samples_and_example_screenshot(client):
+    for i in range(5):
+        client.post(
+            "/api/v1/trades",
+            json={
+                "id": f"pb{i}",
+                "date": f"2026-01-0{i + 1}",
+                "pair": "EURUSD",
+                "h4PoiType": "Bullish OB",
+                "session": "London",
+                "pnl": 50.0,
+                "rr": 2.5,
+                "screenshots": [{"url": f"https://x/{i}.png", "kind": "entry"}],
+            },
+        )
+    resp = client.get("/api/v1/coach/playbook")
+    assert resp.status_code == 200, resp.text
+    setups = resp.json()["setups"]
+    assert len(setups) == 1
+    setup = setups[0]
+    assert setup["poiType"] == "Bullish OB"
+    assert setup["count"] == 5
+    assert setup["winRate"] == 100.0
+    assert setup["bestSession"] == "London"
+    assert len(setup["exampleScreenshots"]) >= 1
+    assert "averageHoldingTime" not in setup

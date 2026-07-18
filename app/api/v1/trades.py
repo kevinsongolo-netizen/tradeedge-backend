@@ -18,6 +18,7 @@ from app.schemas.trade import (
     BulkTradeIn,
     BulkTradeResult,
     DeleteAllTradesResult,
+    TradeDetailInsight,
     TradeIn,
     TradeListResponse,
     TradeOut,
@@ -77,6 +78,26 @@ async def get_trade(
     service = TradeService(session)
     result = await service.get_trade(user_id, trade_id)
     return TradeOut(**result)
+
+
+@router.get(
+    "/{trade_id}/insight",
+    response_model=TradeDetailInsight,
+    summary="Sprint 20 Phase 3 — Most Similar Trades + planned-vs-actual lesson for a saved trade",
+)
+async def get_trade_detail_insight(
+    trade_id: str,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> TradeDetailInsight:
+    """Powers the trade detail view's "Most Similar Trades" section
+    (always) and its "what changed vs my plan" lesson section (once
+    the trade has an exit price) -- reuses the same similarity/lesson
+    engines the pre-trade Chart Analysis Engine and the after-close AI
+    Review already use, just scoped to a trade that's already saved."""
+    service = TradeService(session)
+    result = await service.get_trade_detail_insight(user_id, trade_id)
+    return TradeDetailInsight(**result)
 
 
 @router.patch("/{trade_id}", response_model=TradeOut, summary="Partially update a trade")

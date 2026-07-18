@@ -78,6 +78,17 @@ class Settings(BaseSettings):
     jblanked_api_key: str | None = None
     finnhub_api_key: str | None = None
 
+    # --- Sprint 20 Phase 3: permanent screenshot storage (optional) ---
+    # When unset, screenshot uploads automatically fall back to
+    # PlaceholderImageStorageProvider (app/media/image_storage.py) --
+    # trades still save and analyze fine, they just won't have a
+    # screenshot URL attached. Set all three (e.g. as Render env vars)
+    # from a free Cloudinary account (https://cloudinary.com) to turn
+    # on real, permanent screenshot storage with zero code changes.
+    cloudinary_cloud_name: str | None = None
+    cloudinary_api_key: str | None = None
+    cloudinary_api_secret: str | None = None
+
     @property
     def is_dev(self) -> bool:
         return self.app_env.lower() == "dev"

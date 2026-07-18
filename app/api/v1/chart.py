@@ -29,6 +29,7 @@ from app.schemas.chart import (
     ChartAnalysis,
     ChartAnalysisResponse,
     ChartSetupInsightResponse,
+    ScreenshotUploadResult,
     SetupExtraction,
     SetupInsight,
 )
@@ -90,3 +91,25 @@ async def full_analysis_image(
         insight=SetupInsight(**result["insight"]),
         meta=result["meta"],
     )
+
+
+@router.post(
+    "/upload-screenshot",
+    response_model=ScreenshotUploadResult,
+    summary="Sprint 20 Phase 3 — save a screenshot with no vision analysis (e.g. an after-exit chart shot)",
+)
+async def upload_screenshot(file: UploadFile = File(...)) -> ScreenshotUploadResult:
+    """No vision read, no history comparison -- just permanent storage
+    for a screenshot the trader wants attached to an already-logged
+    trade (typically "how it actually played out" after closing).
+    Never errors out on a storage failure -- returns ``url=None`` with
+    the reason instead, since a screenshot save failing shouldn't block
+    anything else the trader is doing."""
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise ValidationError(f"Unsupported image type: {file.content_type}. Use PNG, JPEG, or WEBP.")
+    image_bytes = await file.read()
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        raise ValidationError("Image too large — please upload a screenshot under 8MB.")
+    service = ChartService()
+    result = await service.upload_screenshot(image_bytes, file.content_type)
+    return ScreenshotUploadResult(**result)

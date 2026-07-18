@@ -68,6 +68,23 @@ class ImageAnalyzeMeta(CamelModel):
 
     provider: str
     is_placeholder: bool
+    # Sprint 20 Phase 3 -- the same screenshot used for this read, now
+    # permanently saved (Cloudinary) so it can be carried straight into
+    # the journal entry built from this extraction. None when no image
+    # storage is configured yet, or the upload failed -- never a fake URL.
+    screenshot_url: str | None = None
+
+
+class ScreenshotUploadResult(CamelModel):
+    """Response for a plain (no-vision-analysis) screenshot upload --
+    used for the optional "after exit" chart shot attached to an
+    already-logged trade. ``url`` is None (not a fake link) whenever
+    screenshot storage isn't configured or the upload failed; ``error``
+    carries the reason in that second case."""
+
+    url: str | None = None
+    is_placeholder: bool = False
+    error: str | None = None
 
 
 class ChartAnalysisResponse(CamelModel):

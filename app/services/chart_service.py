@@ -28,6 +28,7 @@ from app.chart.vision_provider import VisionProviderError, get_vision_provider
 from app.db.repositories.trade_repo import TradeRepository
 from app.engines.setup_insight_engine import build_setup_insight, candidate_from_vision_extraction
 from app.errors import ValidationError
+from app.media.image_storage import ImageStorageProviderError, get_image_storage_provider
 
 # Raw vision-provider fields surfaced directly to the UI as the
 # "extraction" -- what the AI read off the screenshot, before any
@@ -83,9 +84,41 @@ class ChartService:
         meta = {"provider": raw.get("provider", provider.name), "isPlaceholder": raw.get("isPlaceholder", False)}
         extraction = {field: raw.get(field) for field in _EXTRACTION_FIELDS}
 
+        # Sprint 20 Phase 3 -- the trader shouldn't have to upload the
+        # same screenshot twice (once here for the read, again to
+        # attach it to the trade): save it now and hand the URL back so
+        # the frontend can carry it straight into the journal entry it
+        # builds from this same extraction. Best-effort only -- a
+        # storage failure must never block the vision read itself
+        # (which already succeeded by this point) from reaching the
+        # trader; they'd just save the trade with no screenshot
+        # attached, same as before this feature existed.
+        image_storage = get_image_storage_provider()
+        screenshot_url: str | None = None
+        try:
+            screenshot_url = await image_storage.upload(image_bytes, mime_type, folder="tradeedge/entries")
+        except ImageStorageProviderError:
+            screenshot_url = None
+        meta["screenshotUrl"] = screenshot_url
+
         candidate = candidate_from_vision_extraction(raw)
         trade_repo = TradeRepository(self.session)
         history = [t.to_engine_dict() for t in await trade_repo.list_all(user_id)]
         insight = build_setup_insight(candidate, history, raw_extraction=raw)
 
         return {"extraction": extraction, "insight": insight, "meta": meta}
+
+    async def upload_screenshot(self, image_bytes: bytes, mime_type: str, *, folder: str = "tradeedge/exits") -> dict[str, Any]:
+        """Sprint 20 Phase 3 -- plain screenshot upload with no vision
+        analysis, for the optional "after exit" chart shot attached to
+        an already-logged trade (or any other free-standing screenshot
+        upload). Never raises on a storage failure -- returns
+        ``url=None`` plus the reason, so the caller can tell the trader
+        honestly that it didn't save without losing anything else they
+        were doing."""
+        image_storage = get_image_storage_provider()
+        try:
+            url = await image_storage.upload(image_bytes, mime_type, folder=folder)
+        except ImageStorageProviderError as exc:
+            return {"url": None, "isPlaceholder": image_storage.name == "placeholder", "error": str(exc)}
+        return {"url": url, "isPlaceholder": image_storage.name == "placeholder", "error": None}

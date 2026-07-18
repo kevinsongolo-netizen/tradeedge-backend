@@ -68,6 +68,35 @@ class TradeReviewRequest(TradeBase):
     trade is supplied in the request body."""
 
 
+class PlaybookSetup(CamelModel):
+    """One row of "My Best Setups" (Sprint 20 Phase 3 #6) -- a POI type
+    the trader has logged at least a few times, with its win rate, R:R,
+    best session/day (each requiring their own minimum sample -- a
+    single lucky trade in a session doesn't make it "best"), and up to
+    two real winning-trade screenshots as examples. Deliberately no
+    "average holding time" field -- see playbook_engine.py's docstring
+    for why that isn't computable yet."""
+
+    poi_type: str
+    count: int
+    wins: int
+    losses: int
+    breakeven: int
+    win_rate: float
+    average_rr: float | None = None
+    expectancy: float
+    best_session: str | None = None
+    best_session_win_rate: float | None = None
+    best_day: str | None = None
+    best_day_win_rate: float | None = None
+    example_screenshots: list[str] = Field(default_factory=list)
+
+
+class PlaybookResponse(CamelModel):
+    setups: list[PlaybookSetup] = Field(default_factory=list)
+    sample_size: int
+
+
 class TradeReviewResult(CamelModel):
     outcome: str  # "WIN" | "LOSS" | "BREAKEVEN" | "UNKNOWN"
     headline: str
