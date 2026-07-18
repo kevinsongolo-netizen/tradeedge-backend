@@ -159,6 +159,18 @@ def candidate_from_vision_extraction(extraction: dict[str, Any]) -> dict[str, An
         # setups against each other -- fixed here now that timeframe is
         # also a similarity dimension.
         "timeframe": extraction.get("timeframe"),
+        # Sprint 20 Phase 9 ("Confidence-Tiered Reasoning") -- carries the
+        # vision model's own HONEST confidence in the three interpretive
+        # (not directly-observed) judgment calls through to the
+        # candidate, so characteristic_gap_engine can hedge a low-
+        # confidence "Mitigated Order Block"/"Weak Rejection"/"Filled
+        # FVG" reading instead of stating it as settled fact. None
+        # whenever the vision provider didn't supply one (an older read,
+        # or a candidate built some other way than from a screenshot) --
+        # treated as "unknown", never coerced into a fake number.
+        "orderBlockFreshnessConfidence": _num(extraction.get("orderBlockFreshnessConfidence")),
+        "rejectionStrengthConfidence": _num(extraction.get("rejectionStrengthConfidence")),
+        "fvgMitigationConfidence": _num(extraction.get("fvgMitigationConfidence")),
     }
 
 

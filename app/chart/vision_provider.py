@@ -50,6 +50,24 @@ characteristics the trader listed among the full set they want the AI
 learning from every screenshot -- feeding
 ``app/engines/edge_profile_engine.py``'s comprehensive winner/loser
 characteristic discovery, not just the earlier hand-picked dimensions.
+
+Sprint 20 Phase 9 ("Confidence-Tiered Reasoning") -- the trader pointed
+out (reviewing an actual screenshot side by side with the AI's output)
+that three of these reads are fundamentally different from the others:
+whether an order block/FVG is already "mitigated" and how "weak" a
+rejection candle is are judgment calls a single static frame often
+can't fully prove (has this exact zone really been retested before, or
+does it just look untested from one angle?) -- yet they were being
+asserted with the same flat certainty as directly-labeled facts like
+the pair, direction, or entry price. Added ``orderBlockFreshness
+Confidence``/``rejectionStrengthConfidence``/``fvgMitigationConfidence``
+(0-100, the model's own honest confidence in THAT SPECIFIC judgment,
+not the overall ``readConfidence``) so downstream engines
+(``app/engines/characteristic_gap_engine.py``) can hedge a
+low-confidence interpretation ("Possible concern (38% confidence): ...")
+instead of stating it as settled fact. Directly-observed facts (pair,
+direction, entry/SL/TP, BOS/CHoCH/OB/premium-discount presence) are
+unaffected -- those stay exactly as confident as they were.
 """
 from __future__ import annotations
 
@@ -93,8 +111,11 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     # weren't previously captured at all -- see this module's Phase 6
     # docstring note below.
     "orderBlockFreshness": "Fresh | Mitigated | null -- has price already traded back into the order block/FVG the entry is based on before this entry (Mitigated), or is it untouched since it formed (Fresh)?",
+    "orderBlockFreshnessConfidence": "0-100 int -- HONEST confidence in that specific Fresh/Mitigated read, not overall readConfidence. Only score this high if you can actually see clear evidence of a prior retest (a wick or candle body already trading back through the zone); if you're mostly inferring it from the zone's age or general chart feel, score it low (e.g. 30-50).",
     "rejectionStrength": "Strong | Weak | None | null -- how strongly price rejected from the entry zone (a long wick/strong reversal candle = Strong, a weak indecisive candle = Weak, no clear rejection yet = None)",
+    "rejectionStrengthConfidence": "0-100 int -- HONEST confidence in that specific Strong/Weak/None read. Score it low (e.g. 30-50) if there's only one recent candle to judge from, or if the rejection is still forming/ambiguous, rather than defaulting to a confident label either way.",
     "fvgSize": "Large | Medium | Small | null -- the fair value gap's size relative to recent candles, if one is visible",
+    "fvgMitigationConfidence": "0-100 int -- HONEST confidence that the fair value gap described in fvgStatus is actually mitigated/filled (as opposed to still open) -- low (e.g. 30-50) unless you can see price having clearly traded through the gap already.",
     # --- Sprint 20 Phase 8 ("AI Learning Engine") -- four more
     # characteristics the trader specifically listed as things to learn
     # from, that a vision model can estimate the same way it already
@@ -161,8 +182,11 @@ class PlaceholderVisionProvider(VisionProvider):
             "lots": None,
             "poiType": "PLACEHOLDER — Bullish Order Block (example data)",
             "orderBlockFreshness": "Fresh",
+            "orderBlockFreshnessConfidence": 80,
             "rejectionStrength": "Strong",
+            "rejectionStrengthConfidence": 75,
             "fvgSize": "Medium",
+            "fvgMitigationConfidence": 45,
             "equalHighsNearby": True,
             "equalLowsNearby": False,
             "bosType": "External",
@@ -291,6 +315,16 @@ class AnthropicVisionProvider(VisionProvider):
             "an internal (minor swing) or external (major swing) break, and "
             "whether this is the first, second, or third-or-later time price "
             "has touched the order block/FVG. "
+            "IMPORTANT -- be honest about your own confidence in the three "
+            "judgment calls above (order block freshness, rejection strength, "
+            "FVG mitigation): these require inferring things a single static "
+            "image often can't fully prove (e.g. whether this exact zone was "
+            "genuinely retested before, not just how it looks from one angle). "
+            "Only report high confidence (70+) when you can point to clear "
+            "visible evidence (a candle body/wick already trading back through "
+            "the zone, a long obvious reversal wick, etc.); otherwise report a "
+            "realistic lower confidence (30-60) rather than defaulting to a "
+            "confident-sounding label you can't actually back up. "
             "Respond with ONLY a JSON object with exactly these keys: "
             f"{json.dumps(VISION_ANALYSIS_SCHEMA_HINT)}. "
             "If you cannot confidently determine a field from the image, use "

@@ -70,6 +70,47 @@ async def test_placeholder_provider_includes_sprint20_phase8_characteristics():
         assert key in result
 
 
+@pytest.mark.asyncio
+async def test_placeholder_provider_includes_sprint20_phase9_confidence_fields():
+    """Sprint 20 Phase 9 ("Confidence-Tiered Reasoning") -- the vision
+    model's own honest confidence in its three interpretive judgment
+    calls (order block freshness, rejection strength, FVG mitigation),
+    separate from the overall readConfidence."""
+    provider = PlaceholderVisionProvider()
+    result = await provider.analyze_screenshot(b"fake-image-bytes", "image/png")
+    for key in (
+        "orderBlockFreshnessConfidence",
+        "rejectionStrengthConfidence",
+        "fvgMitigationConfidence",
+    ):
+        assert key in result
+        assert isinstance(result[key], (int, float))
+
+
+def test_schema_hint_documents_the_three_confidence_fields():
+    """The prompt-embedded schema hint must ask the vision model for
+    all three confidence fields, or a real Anthropic call would never
+    know to supply them."""
+    from app.chart.vision_provider import VISION_ANALYSIS_SCHEMA_HINT
+
+    for key in (
+        "orderBlockFreshnessConfidence",
+        "rejectionStrengthConfidence",
+        "fvgMitigationConfidence",
+    ):
+        assert key in VISION_ANALYSIS_SCHEMA_HINT
+
+
+def test_anthropic_prompt_instructs_honest_confidence_scoring():
+    """The prompt sent to Claude must explicitly instruct it to score
+    these three fields low unless it can point to real visible
+    evidence, rather than defaulting to a confident-sounding label."""
+    provider = AnthropicVisionProvider(api_key="fake-key-for-prompt-test")
+    prompt = provider._prompt()
+    assert "honest" in prompt.lower()
+    assert "confidence" in prompt.lower()
+
+
 def test_factory_returns_placeholder_when_no_api_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     provider = get_vision_provider()

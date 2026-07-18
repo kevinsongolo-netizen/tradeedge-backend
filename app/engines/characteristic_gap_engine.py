@@ -43,6 +43,21 @@ DOMINANT_SHARE = 0.6
 # weakness list, same instinct as _MAX_REASONS elsewhere: a short,
 # readable list beats a wall of every gap/echo found.
 MAX_WEAKNESSES = 8
+# Sprint 20 Phase 9 ("Confidence-Tiered Reasoning") -- below this, a
+# standalone weakness derived from a vision model's OWN judgment call
+# (order block freshness, rejection strength, FVG mitigation -- as
+# opposed to a directly-observed fact) gets hedged as a "Possible
+# concern (NN% confidence)" instead of stated as settled fact, per the
+# trader's own review of a live screenshot: these three specifically
+# require inferring things a single static frame often can't fully
+# prove, so asserting them with the same flat certainty as the pair or
+# entry price overstates what the AI actually knows. Below this bar,
+# severity is also downgraded from the standalone-flag default of 100
+# to the confidence value itself, so a shaky, low-confidence concern
+# naturally ranks below the historical winner/loser echoes it's mixed
+# in with, rather than always winning "why this could lose" purely by
+# being a standalone flag.
+HIGH_CONFIDENCE_THRESHOLD = 70.0
 
 # Categorical fields worth comparing directly (candidate vs. the
 # dominant value in the winning/losing subset).
@@ -266,15 +281,50 @@ _GOOD_BAD_TAG_PAIRS: list[tuple[str, str, str]] = [
 # whether to take the trade). "Counter-trend setup" reuses the EXACT
 # SAME condition app/engines/mistake_engine.py's "counterTrend" mistake
 # category already uses, for consistency across the app.
+def _hedge_weakness(candidate: dict[str, Any], confidence_field: str, confident_label: str, hedged_label: str) -> dict[str, Any]:
+    """Sprint 20 Phase 9 -- one standalone weakness row, worded
+    according to how confident the vision model actually was in the
+    judgment call behind it (see HIGH_CONFIDENCE_THRESHOLD's
+    docstring). ``confidence_field`` is missing/None whenever the
+    candidate wasn't built from a screenshot read that supplied one
+    (an older read, or a manually-entered candidate) -- treated the
+    same as a confident read (severity 100, unhedged label) rather
+    than silently dropping the flag altogether, since "unknown
+    confidence" isn't evidence the concern is wrong, just that this
+    particular read didn't carry a confidence number."""
+    confidence = candidate.get(confidence_field)
+    if confidence is None or confidence >= HIGH_CONFIDENCE_THRESHOLD:
+        return {"label": confident_label, "severity": 100.0}
+    return {
+        "label": f"Possible concern ({round(confidence)}% confidence): {hedged_label}",
+        "severity": float(confidence),
+    }
+
+
 def _standalone_weaknesses(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     tags = candidate.get("m15Confirmations") or []
     weaknesses: list[dict[str, Any]] = []
     if "Mitigated Order Block" in tags:
-        weaknesses.append({"label": "Order Block already mitigated", "severity": 100.0})
+        weaknesses.append(_hedge_weakness(
+            candidate, "orderBlockFreshnessConfidence",
+            "Order Block already mitigated",
+            "This Order Block may have already been revisited/mitigated -- verify before relying on it.",
+        ))
     if "Weak Rejection" in tags:
-        weaknesses.append({"label": "Weak rejection candle", "severity": 100.0})
+        weaknesses.append(_hedge_weakness(
+            candidate, "rejectionStrengthConfidence",
+            "Weak rejection candle",
+            "A strong rejection candle hasn't been clearly confirmed yet.",
+        ))
     if "Filled FVG" in tags:
-        weaknesses.append({"label": "Fair Value Gap already filled", "severity": 100.0})
+        weaknesses.append(_hedge_weakness(
+            candidate, "fvgMitigationConfidence",
+            "Fair Value Gap already filled",
+            "This Fair Value Gap may already be filled -- verify before relying on it.",
+        ))
+    # Counter-trend is a directly-derivable logical fact from two
+    # already-stated categorical fields (trend label, order direction),
+    # not a single-frame judgment call -- no hedging needed here.
     h4_trend = candidate.get("h4Trend")
     direction = candidate.get("direction")
     if (h4_trend == "Bullish" and direction == "sell") or (h4_trend == "Bearish" and direction == "buy"):

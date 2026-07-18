@@ -332,10 +332,20 @@ class WinnerChecklistRow(CamelModel):
 class WeaknessRow(CamelModel):
     """Sprint 20 Phase 7 -- one row of the ranked "why might this setup
     lose" list: a short characteristic name and its severity (0-100,
-    used only for ranking -- standalone flags like an already-mitigated
-    Order Block are always 100). See
+    used mainly for ranking -- standalone flags like an already-
+    mitigated Order Block default to 100). See
     ``app/engines/characteristic_gap_engine.py``'s ``_standalone_
-    weaknesses``/``_evaluate_loser_echo_profile``."""
+    weaknesses``/``_evaluate_loser_echo_profile``.
+
+    Sprint 20 Phase 9 ("Confidence-Tiered Reasoning") -- when a
+    standalone flag is derived from a vision model's own single-
+    screenshot judgment call (order block freshness, rejection
+    strength, FVG mitigation) and that model reported LOW confidence
+    in that specific read, ``label`` is worded as a hedged "Possible
+    concern (NN% confidence): ..." rather than flat fact, and
+    ``severity`` is set to that same confidence number (not 100) so it
+    naturally ranks below higher-certainty concerns instead of always
+    winning by default. See ``_hedge_weakness``."""
 
     label: str
     severity: float = 0.0

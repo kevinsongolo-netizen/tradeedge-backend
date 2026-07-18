@@ -100,6 +100,34 @@ def test_candidate_from_vision_extraction_maps_phase8_characteristics():
     assert "Third+ Touch" in third_touch["m15Confirmations"]
 
 
+def test_candidate_from_vision_extraction_carries_confidence_fields():
+    """Sprint 20 Phase 9 ("Confidence-Tiered Reasoning") -- the vision
+    model's own honest confidence in its three interpretive judgment
+    calls must be threaded through onto the candidate so
+    characteristic_gap_engine can hedge a low-confidence read."""
+    candidate = candidate_from_vision_extraction({
+        "orderBlockFreshness": "Mitigated",
+        "orderBlockFreshnessConfidence": 42,
+        "rejectionStrength": "Weak",
+        "rejectionStrengthConfidence": 38,
+        "fvgStatus": "Bullish FVG mitigated",
+        "fvgMitigationConfidence": 30,
+    })
+    assert candidate["orderBlockFreshnessConfidence"] == 42
+    assert candidate["rejectionStrengthConfidence"] == 38
+    assert candidate["fvgMitigationConfidence"] == 30
+
+
+def test_candidate_from_vision_extraction_confidence_fields_default_to_none():
+    """No confidence field supplied (an older read, or a candidate
+    built some other way than from a screenshot) -- must be None, not
+    a fabricated number or a crash."""
+    candidate = candidate_from_vision_extraction({"orderBlockFreshness": "Fresh"})
+    assert candidate["orderBlockFreshnessConfidence"] is None
+    assert candidate["rejectionStrengthConfidence"] is None
+    assert candidate["fvgMitigationConfidence"] is None
+
+
 def test_insufficient_history_returns_honest_message_not_a_fake_result():
     candidate = {"pair": "GOLDmicro", "direction": "sell", "rr": 1.8}
     thin_history = [{"id": "1", "pair": "GOLDmicro", "direction": "sell", "pnl": 10}]

@@ -293,3 +293,96 @@ def test_weaknesses_and_better_than_losers_empty_without_enough_data():
     candidate = {"m15Confirmations": []}
     result = build_characteristic_gaps(candidate, [])
     assert result["betterThanLosers"] == []
+
+
+# --- Sprint 20 Phase 9 ("Confidence-Tiered Reasoning") -------------------------
+
+def test_low_confidence_mitigation_flag_is_hedged():
+    """A trader reviewing a live screenshot pointed out that 'Order
+    Block already mitigated' was asserted as flat fact from a single
+    frame with no supporting evidence -- when the vision model itself
+    reports low confidence in that specific read, the weakness must be
+    worded as a hedged possibility, not a settled fact."""
+    candidate = {
+        "direction": "buy", "h4Trend": "Bullish",
+        "m15Confirmations": ["Mitigated Order Block"],
+        "orderBlockFreshnessConfidence": 42,
+    }
+    result = build_characteristic_gaps(candidate, [])
+    labels = [w["label"] for w in result["weaknesses"]]
+    assert any(l.startswith("Possible concern (42% confidence)") for l in labels)
+    assert "Order Block already mitigated" not in labels
+    hedged = next(w for w in result["weaknesses"] if w["label"].startswith("Possible concern"))
+    assert hedged["severity"] == 42.0
+
+
+def test_low_confidence_rejection_flag_is_hedged():
+    candidate = {
+        "direction": "buy", "h4Trend": "Bullish",
+        "m15Confirmations": ["Weak Rejection"],
+        "rejectionStrengthConfidence": 38,
+    }
+    result = build_characteristic_gaps(candidate, [])
+    labels = [w["label"] for w in result["weaknesses"]]
+    assert any(l.startswith("Possible concern (38% confidence)") and "rejection" in l for l in labels)
+    assert "Weak rejection candle" not in labels
+
+
+def test_low_confidence_fvg_flag_is_hedged():
+    candidate = {
+        "direction": "buy", "h4Trend": "Bullish",
+        "m15Confirmations": ["Filled FVG"],
+        "fvgMitigationConfidence": 30,
+    }
+    result = build_characteristic_gaps(candidate, [])
+    labels = [w["label"] for w in result["weaknesses"]]
+    assert any(l.startswith("Possible concern (30% confidence)") for l in labels)
+    assert "Fair Value Gap already filled" not in labels
+
+
+def test_high_confidence_mitigation_flag_stays_unhedged():
+    """The AI can point to clear evidence (long reversal wick, obvious
+    prior retest) -- in that case the flat wording is appropriate,
+    exactly as before this phase."""
+    candidate = {
+        "direction": "buy", "h4Trend": "Bullish",
+        "m15Confirmations": ["Mitigated Order Block"],
+        "orderBlockFreshnessConfidence": 85,
+    }
+    result = build_characteristic_gaps(candidate, [])
+    labels = [w["label"] for w in result["weaknesses"]]
+    assert "Order Block already mitigated" in labels
+    assert not any(l.startswith("Possible concern") for l in labels)
+
+
+def test_missing_confidence_field_keeps_prior_unhedged_behavior():
+    """An older screenshot read (or a candidate built some other way)
+    with no confidence field at all must behave exactly like before
+    this phase -- unknown confidence is not treated as low confidence."""
+    candidate = {
+        "direction": "buy", "h4Trend": "Bullish",
+        "m15Confirmations": ["Mitigated Order Block", "Weak Rejection", "Filled FVG"],
+    }
+    result = build_characteristic_gaps(candidate, [])
+    labels = {w["label"] for w in result["weaknesses"]}
+    assert "Order Block already mitigated" in labels
+    assert "Weak rejection candle" in labels
+    assert "Fair Value Gap already filled" in labels
+
+
+def test_counter_trend_flag_never_hedged():
+    """Counter-trend is a directly-derivable logical fact from two
+    already-stated categorical fields, not a single-frame judgment
+    call -- it must never pick up hedged wording even with a low
+    confidence field present on the candidate (which wouldn't apply to
+    it anyway, but guards against ever wiring it in by mistake)."""
+    candidate = {
+        "direction": "sell", "h4Trend": "Bullish",
+        "m15Confirmations": [],
+        "orderBlockFreshnessConfidence": 10,
+        "rejectionStrengthConfidence": 10,
+        "fvgMitigationConfidence": 10,
+    }
+    result = build_characteristic_gaps(candidate, [])
+    labels = [w["label"] for w in result["weaknesses"]]
+    assert "Counter-trend setup" in labels
