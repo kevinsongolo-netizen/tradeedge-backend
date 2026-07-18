@@ -455,3 +455,44 @@ def test_breakdown_points_are_signed_percent_of_total_weight():
     # Signed points are each a share of 100 -- the total magnitude across
     # every evaluated dimension should land close to 100.
     assert 90 <= total_weight_points <= 110
+
+
+def test_confidence_explanation_populated_when_low_confidence(history):
+    """Sprint 20 Phase 7 -- 'AI Confidence Explanation': itemized reasons
+    accompany the low-confidence narrative, not just the bare sentence."""
+    thin_history = [
+        {"id": "t1", "pair": "GOLDmicro", "direction": "sell", "pnl": -50.0, "date": "2026-01-01"},
+        {"id": "t2", "pair": "GOLDmicro", "direction": "sell", "pnl": 10.0, "date": "2026-01-02"},
+    ]
+    candidate = {"pair": "GOLDmicro", "direction": "sell"}
+    insight = build_setup_insight(candidate, thin_history, min_total_history=1)
+    assert insight["lowConfidence"] is True
+    explanation = insight["confidenceExplanation"]
+    assert any("2 similar trades" in r or "Only 2" in r for r in explanation)
+    assert any("1 of them" in r for r in explanation)
+
+
+def test_confidence_explanation_empty_when_confident(history):
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "pnl": 60.0}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell"}
+    insight = build_setup_insight(candidate, matches)
+    assert insight["lowConfidence"] is False
+    assert insight["confidenceExplanation"] == []
+
+
+def test_improvement_suggestions_reuse_winner_checklist_missing_rows(history):
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "pnl": 60.0,
+         "session": "London", "m15Confirmations": ["Liquidity Sweep"]}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell",
+                 "session": "New York", "m15Confirmations": []}
+    insight = build_setup_insight(candidate, matches)
+    suggestions = insight["characteristicGaps"]["improvementSuggestions"]
+    assert any("London Session" in s for s in suggestions)
+    assert any("Liquidity Sweep" in s for s in suggestions)
+    assert all(s.startswith("Wait for:") for s in suggestions)

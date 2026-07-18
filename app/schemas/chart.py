@@ -329,6 +329,18 @@ class WinnerChecklistRow(CamelModel):
     matched: bool
 
 
+class WeaknessRow(CamelModel):
+    """Sprint 20 Phase 7 -- one row of the ranked "why might this setup
+    lose" list: a short characteristic name and its severity (0-100,
+    used only for ranking -- standalone flags like an already-mitigated
+    Order Block are always 100). See
+    ``app/engines/characteristic_gap_engine.py``'s ``_standalone_
+    weaknesses``/``_evaluate_loser_echo_profile``."""
+
+    label: str
+    severity: float = 0.0
+
+
 class CharacteristicGaps(CamelModel):
     """Sprint 20 Phase 4 -- "what do my winners have that this
     doesn't / what do my losers have that this also has?" See
@@ -349,6 +361,16 @@ class CharacteristicGaps(CamelModel):
     # Sprint 20 Phase 6 -- structured ✓/✗ checklist version of the same
     # comparison winner_gaps already describes in prose.
     winner_checklist: list[WinnerChecklistRow] = Field(default_factory=list)
+    # Sprint 20 Phase 7 -- "AI Trade Mentor": ranked "why might this
+    # setup lose" list (standalone flags + historical echoes, combined
+    # and ranked by severity), "what makes this setup better than my
+    # losers" (only ever claimed on dimensions with an unambiguous
+    # direction -- R:R, OB freshness, rejection strength, FVG size),
+    # and "Improvement Suggestions" (directly derived from
+    # winner_checklist's own missing rows).
+    weaknesses: list[WeaknessRow] = Field(default_factory=list)
+    better_than_losers: list[str] = Field(default_factory=list)
+    improvement_suggestions: list[str] = Field(default_factory=list)
 
 
 class SetupInsight(CamelModel):
@@ -374,6 +396,11 @@ class SetupInsight(CamelModel):
     # normal win-rate display for an explicit "low confidence" note.
     low_confidence: bool = False
     characteristic_gaps: CharacteristicGaps | None = None
+    # Sprint 20 Phase 7 -- "AI Confidence Explanation": itemized reasons
+    # a low-confidence read is low-confidence (sample size, win/loss/
+    # breakeven split), instead of just a bare small number. Empty
+    # whenever low_confidence is false.
+    confidence_explanation: list[str] = Field(default_factory=list)
 
 
 class ChartSetupInsightResponse(CamelModel):

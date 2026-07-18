@@ -241,3 +241,38 @@ def test_discovered_patterns_surfaces_real_separation(client):
     body = resp.json()
     assert body["hasEnoughData"] is True
     assert any("London" in p for p in body["patterns"])
+
+
+# --- GET /coach/mentor-report (Sprint 20 Phase 7) ------------------------------
+
+def test_mentor_report_empty_with_no_trades(client):
+    resp = client.get("/api/v1/coach/mentor-report")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["hasEnoughData"] is False
+    assert body["period"] == "week"
+
+
+def test_mentor_report_rejects_invalid_period(client):
+    resp = client.get("/api/v1/coach/mentor-report", params={"period": "year"})
+    assert resp.status_code == 422
+
+
+def test_mentor_report_month_period_surfaces_stats(client):
+    import datetime
+    today = datetime.date.today()
+    for i in range(5):
+        d = today - datetime.timedelta(days=i)
+        client.post(
+            "/api/v1/trades",
+            json={
+                "id": f"mentor{i}", "date": d.isoformat(), "pair": "EURUSD",
+                "pnl": 40.0 if i % 2 == 0 else -15.0, "failedTags": ["Late entry"] if i % 2 else [],
+            },
+        )
+    resp = client.get("/api/v1/coach/mentor-report", params={"period": "month"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["period"] == "month"
+    assert body["hasEnoughData"] is True
+    assert body["periodSampleSize"] == 5

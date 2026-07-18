@@ -39,6 +39,10 @@ from typing import Any
 
 MIN_SAMPLE_FOR_GAP = 3
 DOMINANT_SHARE = 0.6
+# Sprint 20 Phase 7 -- cap on the ranked "why might this setup lose"
+# weakness list, same instinct as _MAX_REASONS elsewhere: a short,
+# readable list beats a wall of every gap/echo found.
+MAX_WEAKNESSES = 8
 
 # Categorical fields worth comparing directly (candidate vs. the
 # dominant value in the winning/losing subset).
@@ -200,7 +204,7 @@ def _evaluate_winner_profile(candidate: dict[str, Any], winners: list[dict[str, 
             )
         matched_label, missing_template = _CATEGORICAL_CHECKLIST_LABELS.get(field, (f"Same {label}", "{value}"))
         checklist_label = matched_label if matched else missing_template.format(value=value)
-        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label})
+        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label, "severity": share * 100})
 
     for tag, label in _TAG_DIMENSIONS:
         share = _tag_presence_share(winners, tag)
@@ -211,7 +215,7 @@ def _evaluate_winner_profile(candidate: dict[str, Any], winners: list[dict[str, 
         if not matched:
             gap_text = f"{share * 100:.0f}% of your similar winning trades had {label} -- this one doesn't."
         checklist_label = _TAG_CHECKLIST_LABELS.get(tag, tag)
-        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label})
+        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label, "severity": share * 100})
 
     for field, label, lower_word, higher_word, extractor in _CONTINUOUS_DIMENSIONS:
         avg = _continuous_average(winners, extractor)
@@ -231,9 +235,109 @@ def _evaluate_winner_profile(candidate: dict[str, Any], winners: list[dict[str, 
             field, (f"Similar {label}", "{word} " + label.title())
         )
         checklist_label = matched_label if matched else missing_template.format(word=direction.capitalize())
-        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label})
+        # Severity for a continuous miss is how far the ratio strayed
+        # from 1.0 (a perfect match), scaled to a comparable 0-100
+        # range as the categorical/tag shares above.
+        severity = min(100.0, abs(ratio - 1.0) * 100)
+        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label, "severity": severity})
 
     return rows
+
+
+# Sprint 20 Phase 7 -- "AI Trade Mentor": characteristics with an
+# unambiguous better/worse direction, used for the "what makes this
+# setup better than my losers" comparison. Deliberately NOT extended to
+# purely categorical dimensions with no inherent direction (session,
+# pair, POI type, zone) -- claiming a session or pair is "better" than
+# another would be fabricating a value judgment this app has no basis
+# for; see similar_engine.py's module docstring for the same instinct
+# applied elsewhere (documented gaps rather than invented certainty).
+_GOOD_BAD_TAG_PAIRS: list[tuple[str, str, str]] = [
+    ("Fresh Order Block", "Mitigated Order Block", "Fresh Order Block"),
+    ("Strong Rejection", "Weak Rejection", "Strong Rejection Candle"),
+    ("Large FVG", "Filled FVG", "Large Fair Value Gap"),
+]
+
+# Standalone weakness flags (Sprint 20 Phase 7) -- evaluated on the
+# candidate ALONE, no trade history required, since each is
+# self-evidently a weaker setup characteristic regardless of sample
+# size (same instinct as chart/vision_provider.py's
+# numberConsistencyWarning: a descriptive flag, never a verdict on
+# whether to take the trade). "Counter-trend setup" reuses the EXACT
+# SAME condition app/engines/mistake_engine.py's "counterTrend" mistake
+# category already uses, for consistency across the app.
+def _standalone_weaknesses(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    tags = candidate.get("m15Confirmations") or []
+    weaknesses: list[dict[str, Any]] = []
+    if "Mitigated Order Block" in tags:
+        weaknesses.append({"label": "Order Block already mitigated", "severity": 100.0})
+    if "Weak Rejection" in tags:
+        weaknesses.append({"label": "Weak rejection candle", "severity": 100.0})
+    if "Filled FVG" in tags:
+        weaknesses.append({"label": "Fair Value Gap already filled", "severity": 100.0})
+    h4_trend = candidate.get("h4Trend")
+    direction = candidate.get("direction")
+    if (h4_trend == "Bullish" and direction == "sell") or (h4_trend == "Bearish" and direction == "buy"):
+        weaknesses.append({"label": "Counter-trend setup", "severity": 100.0})
+    return weaknesses
+
+
+def _evaluate_loser_echo_profile(candidate: dict[str, Any], losers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mirror of ``_evaluate_winner_profile``, but against the LOSING
+    subset: one row per evaluable dimension where the candidate ECHOES
+    (shares) whatever losers on setups like this typically look like.
+    Used both for the existing ``loserEchoes`` prose list and (Sprint
+    20 Phase 7) the ranked weaknesses list -- an echoed loser
+    characteristic is exactly what "why might this setup lose" means."""
+    rows: list[dict[str, Any]] = []
+
+    for field, label in _CATEGORICAL_DIMENSIONS:
+        value, share = _dominant_value(losers, field)
+        if value is None or share < DOMINANT_SHARE or candidate.get(field) != value:
+            continue
+        rows.append({
+            "label": _CATEGORICAL_CHECKLIST_LABELS.get(field, (None, "{value}"))[1].format(value=value),
+            "gapText": (
+                f"Your losing trades on setups like this are usually in the {value} {label} "
+                f"({share * 100:.0f}% of {len(losers)} similar losses) -- this one is too."
+            ),
+            "severity": share * 100,
+        })
+
+    for tag, label in _TAG_DIMENSIONS:
+        share = _tag_presence_share(losers, tag)
+        if share < DOMINANT_SHARE or not _candidate_has_tag(candidate, tag):
+            continue
+        rows.append({
+            "label": _TAG_CHECKLIST_LABELS.get(tag, tag),
+            "gapText": f"{share * 100:.0f}% of your similar losing trades also had {label} -- this one does too.",
+            "severity": share * 100,
+        })
+
+    return rows
+
+
+def _evaluate_better_than_losers(candidate: dict[str, Any], losers: list[dict[str, Any]]) -> list[str]:
+    """"What makes this setup better than my losers?" (Sprint 20 Phase
+    7) -- only ever claims "better" on a dimension with an unambiguous
+    direction (see ``_GOOD_BAD_TAG_PAIRS`` and R:R below), and only once
+    losers dominantly show the WORSE side of that dimension."""
+    candidate_tags = candidate.get("m15Confirmations") or []
+    reasons: list[str] = []
+
+    for good_tag, bad_tag, label in _GOOD_BAD_TAG_PAIRS:
+        bad_share = _tag_presence_share(losers, bad_tag)
+        if bad_share >= DOMINANT_SHARE and good_tag in candidate_tags:
+            reasons.append(f"{label} ({bad_share * 100:.0f}% of your similar losses had a {bad_tag.lower()} instead).")
+
+    losers_avg_rr = _continuous_average(losers, _rr_value)
+    candidate_rr = _rr_value(candidate)
+    if losers_avg_rr and losers_avg_rr > 0 and candidate_rr is not None:
+        ratio = candidate_rr / losers_avg_rr
+        if ratio >= _NOTABLY_HIGHER_RATIO:
+            reasons.append(f"Better Risk:Reward ({candidate_rr:.2f} vs. an average {losers_avg_rr:.2f} on your similar losses).")
+
+    return reasons
 
 
 def build_characteristic_gaps(
@@ -275,6 +379,13 @@ def build_characteristic_gaps(
     # under a "Missing:" heading -- see the trader's own worked example.
     winner_checklist: list[dict[str, Any]] = []
 
+    # Sprint 20 Phase 7 -- "AI Trade Mentor": ranked weakness list
+    # ("why might this setup lose") -- standalone flags always
+    # evaluated, plus historical signals gated the same
+    # MIN_SAMPLE_FOR_GAP honesty bar as everything else here.
+    weaknesses: list[dict[str, Any]] = list(_standalone_weaknesses(candidate))
+    better_than_losers: list[str] = []
+
     if len(winners) >= MIN_SAMPLE_FOR_GAP:
         profile = _evaluate_winner_profile(candidate, winners)
         winner_gaps = [row["gapText"] for row in profile if row["gapText"]]
@@ -286,6 +397,11 @@ def build_characteristic_gaps(
                 f"This setup matches {winner_match_count} of {winner_match_total} characteristics "
                 "your winning trades typically have."
             )
+        weaknesses.extend(
+            {"label": row["checklistLabel"], "severity": row["severity"]}
+            for row in profile
+            if not row["matched"]
+        )
 
     if len(losers) >= MIN_SAMPLE_FOR_GAP:
         for field, label in _CATEGORICAL_DIMENSIONS:
@@ -316,6 +432,25 @@ def build_characteristic_gaps(
                     f"Your losing trades on setups like this usually have a {label} around {avg:.2f} "
                     f"-- this one is {candidate_value:.2f}, very similar."
                 )
+        # Presence-based loser echoes (a bad tag this candidate has that
+        # losers also typically have) feed the ranked weaknesses list --
+        # a distinct, additive signal from the absence-echo prose above.
+        weaknesses.extend(_evaluate_loser_echo_profile(candidate, losers))
+        better_than_losers = _evaluate_better_than_losers(candidate, losers)
+
+    # Dedupe by label (a standalone flag and a historical echo can name
+    # the same characteristic -- e.g. "Order Block already mitigated"
+    # is always flagged standalone, so a redundant historical echo of
+    # the same tag is dropped rather than shown twice), then rank by
+    # severity so the most likely reasons come first.
+    seen_labels: set[str] = set()
+    ranked_weaknesses: list[dict[str, Any]] = []
+    for w in sorted(weaknesses, key=lambda w: w["severity"], reverse=True):
+        if w["label"] in seen_labels:
+            continue
+        seen_labels.add(w["label"])
+        ranked_weaknesses.append(w)
+    ranked_weaknesses = ranked_weaknesses[:MAX_WEAKNESSES]
 
     return {
         "hasEnoughData": len(winners) >= MIN_SAMPLE_FOR_GAP or len(losers) >= MIN_SAMPLE_FOR_GAP,
@@ -327,4 +462,12 @@ def build_characteristic_gaps(
         "winnerMatchTotal": winner_match_total,
         "winnerMatchSummary": winner_match_summary,
         "winnerChecklist": winner_checklist,
+        "weaknesses": ranked_weaknesses,
+        "betterThanLosers": better_than_losers,
+        # Sprint 20 Phase 7 -- "Improvement Suggestions": directly
+        # derived from winner_checklist's own missing rows (never a
+        # second, possibly-inconsistent computation) -- purely
+        # descriptive ("this is what's usually present when you win"),
+        # never a go/no-go verdict on the current setup.
+        "improvementSuggestions": [f"Wait for: {row['label']}" for row in winner_checklist if not row["matched"]],
     }

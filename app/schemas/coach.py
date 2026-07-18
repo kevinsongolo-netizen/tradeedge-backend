@@ -118,6 +118,26 @@ class EdgePattern(CamelModel):
     expectancy: float
 
 
+class MentorReportResponse(CamelModel):
+    """Sprint 20 Phase 7 -- "AI Trade Mentor" periodic coaching report.
+    See app/engines/mentor_report_engine.py's docstring. Every field
+    below is None/empty whenever there wasn't enough data for THAT
+    specific comparison -- never a fabricated stat."""
+
+    period: str
+    has_enough_data: bool = False
+    period_sample_size: int = 0
+    biggest_improvement: str | None = None
+    biggest_repeated_mistake: str | None = None
+    costliest_habit: str | None = None
+    best_setup: str | None = None
+    worst_setup: str | None = None
+    best_pair: str | None = None
+    pair_to_stop_trading: str | None = None
+    winner_characteristic: str | None = None
+    loser_characteristic: str | None = None
+
+
 class DiscoveredPatternsResponse(CamelModel):
     """Sprint 20 Phase 6 -- "learn from my screenshots": standalone
     narrative statements about what separates this trader's own

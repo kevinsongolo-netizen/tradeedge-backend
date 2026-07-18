@@ -86,10 +86,22 @@ def candidate_from_vision_extraction(extraction: dict[str, Any]) -> dict[str, An
         tags.append("Fresh Order Block")
     elif ob_freshness == "mitigated":
         tags.append("Mitigated Order Block")
-    if (extraction.get("rejectionStrength") or "").strip().lower() == "strong":
+    rejection_strength = (extraction.get("rejectionStrength") or "").strip().lower()
+    if rejection_strength == "strong":
         tags.append("Strong Rejection")
+    elif rejection_strength == "weak":
+        # Sprint 20 Phase 7 -- "AI Trade Mentor" weakness list needs a
+        # NEGATIVE rejection signal too, not just the positive "Strong
+        # Rejection" tag -- same field, the other end of it.
+        tags.append("Weak Rejection")
     if (extraction.get("fvgSize") or "").strip().lower() == "large":
         tags.append("Large FVG")
+    # Sprint 20 Phase 7 -- "Fair Value Gap already filled" is already
+    # readable off the EXISTING fvgStatus free text (no new vision
+    # field needed) -- the vision provider already writes prose like
+    # "Bullish FVG mitigated" there when it can tell.
+    if "mitigat" in fvg_status.lower() or "fill" in fvg_status.lower():
+        tags.append("Filled FVG")
 
     return {
         "pair": extraction.get("pair"),
@@ -310,6 +322,23 @@ def _r_multiple_display(rr: float | None, outcome: str | None) -> str | None:
     return f"{sign}{abs(rr):.2f}R"
 
 
+def _confidence_explanation(sample_size: int, wins: int, losses: int, breakeven: int) -> list[str]:
+    """Sprint 20 Phase 7 -- "AI Confidence Explanation": itemizes WHY a
+    low-confidence read is low-confidence, instead of just showing a
+    bare small number. Purely arithmetic over the same sample_size/
+    wins/losses/breakeven this function already computed -- no new
+    data, just spelled out plainly."""
+    reasons = [f"Only {sample_size} similar trade{'s' if sample_size != 1 else ''} exist{'s' if sample_size == 1 else ''} yet."]
+    if losses:
+        reasons.append(f"{losses} of them {'was a loss' if losses == 1 else 'were losses'}.")
+    if breakeven:
+        reasons.append(f"{breakeven} {'was' if breakeven == 1 else 'were'} breakeven.")
+    if wins == 0:
+        reasons.append("No winning example exists yet.")
+    reasons.append("More similar trades (aim for 30-50+) will make this comparison much more reliable.")
+    return reasons
+
+
 def _detected_summary(raw_extraction: dict[str, Any] | None) -> str | None:
     """Restates exactly what the vision model read off THIS screenshot
     -- the trader's own order type, POI label, and structure event, in
@@ -469,12 +498,14 @@ def build_setup_insight(
     average_profit = None if low_confidence else result.get("averageProfit")
 
     narrative: list[str] = [detected] if detected else []
+    confidence_explanation: list[str] = []
     if low_confidence:
         narrative.append(
             f"Low confidence: only {sample_size} similar trade{'s' if sample_size != 1 else ''} available "
             f"({wins}W/{losses}L{f'/{breakeven}BE' if breakeven else ''}, {avg_similarity:.0f}% similar on average). "
             "Continue journaling before relying on this statistic."
         )
+        confidence_explanation = _confidence_explanation(sample_size, wins, losses, breakeven)
     else:
         win_rate_txt = f"{win_rate:.0f}%" if win_rate is not None else "n/a"
         narrative.append(
@@ -573,4 +604,5 @@ def build_setup_insight(
         "riskNotes": risk_notes,
         "lowConfidence": low_confidence,
         "characteristicGaps": characteristic_gaps,
+        "confidenceExplanation": confidence_explanation,
     }

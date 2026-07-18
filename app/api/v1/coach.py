@@ -12,6 +12,7 @@ from app.schemas.coach import (
     CoachInsightsResponse,
     DiscoveredPatternsResponse,
     EdgePatternsResponse,
+    MentorReportResponse,
     PlaybookResponse,
     TradeReviewRequest,
     TradeReviewResult,
@@ -106,6 +107,26 @@ async def coach_discovered_patterns(
     service = CoachService(session)
     result = await service.discovered_patterns(user_id)
     return DiscoveredPatternsResponse(**result)
+
+
+@router.get(
+    "/mentor-report",
+    response_model=MentorReportResponse,
+    summary="Sprint 20 Phase 7 — AI Trade Mentor periodic coaching report",
+)
+async def coach_mentor_report(
+    period: str = Query(default="week", pattern="^(week|month)$"),
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> MentorReportResponse:
+    """"I want a weekly/monthly coaching report" -- biggest improvement,
+    biggest repeated mistake, costliest habit, best/worst setup by
+    money, best pair/pair to stop trading, and the top winner/loser
+    characteristic, all discovered purely from this trader's own
+    history. See app/engines/mentor_report_engine.py's docstring."""
+    service = CoachService(session)
+    result = await service.mentor_report(user_id, period)
+    return MentorReportResponse(**result)
 
 
 @router.post(

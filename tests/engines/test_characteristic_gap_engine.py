@@ -214,3 +214,82 @@ def test_winner_checklist_empty_without_enough_winners():
     candidate = {"m15Confirmations": []}
     result = build_characteristic_gaps(candidate, similar)
     assert result["winnerChecklist"] == []
+
+
+# --- Sprint 20 Phase 7 -- "AI Trade Mentor" weakness ranking ------------------
+
+def test_standalone_weakness_flags_need_no_history():
+    """Order Block mitigation, weak rejection, filled FVG, and
+    counter-trend are self-evident regardless of sample size -- no
+    similar trades needed for them to show up."""
+    candidate = {
+        "direction": "sell", "h4Trend": "Bullish",
+        "m15Confirmations": ["Mitigated Order Block", "Weak Rejection", "Filled FVG"],
+    }
+    result = build_characteristic_gaps(candidate, [])
+    labels = {w["label"] for w in result["weaknesses"]}
+    assert "Order Block already mitigated" in labels
+    assert "Weak rejection candle" in labels
+    assert "Fair Value Gap already filled" in labels
+    assert "Counter-trend setup" in labels
+
+
+def test_no_counter_trend_flag_when_aligned():
+    candidate = {"direction": "sell", "h4Trend": "Bearish", "m15Confirmations": []}
+    result = build_characteristic_gaps(candidate, [])
+    assert not any(w["label"] == "Counter-trend setup" for w in result["weaknesses"])
+
+
+def test_weaknesses_ranked_most_severe_first():
+    """A standalone flag (severity 100) must outrank a historical
+    winner-gap miss with a lower share."""
+    similar = [
+        _trade(f"w{i}", "Win", session="London", m15Confirmations=["BOS"])
+        for i in range(3)
+    ] + [_trade("w4", "Win", session="New York", m15Confirmations=["BOS"])]  # dilutes session share below 100%
+    candidate = {
+        "session": "Asian",
+        "m15Confirmations": ["Mitigated Order Block"],
+    }
+    result = build_characteristic_gaps(candidate, similar)
+    weaknesses = result["weaknesses"]
+    assert weaknesses[0]["label"] == "Order Block already mitigated"
+
+
+def test_weakness_deduped_between_standalone_and_historical_echo():
+    """A candidate that both standalone-flags AND historically echoes
+    the same tag (e.g. Mitigated Order Block) should only see it once."""
+    similar = [_trade(f"l{i}", "Loss", m15Confirmations=["Mitigated Order Block"]) for i in range(4)]
+    candidate = {"m15Confirmations": ["Mitigated Order Block"]}
+    result = build_characteristic_gaps(candidate, similar)
+    count = sum(1 for w in result["weaknesses"] if w["label"] == "Order Block already mitigated")
+    assert count == 1
+
+
+def test_better_than_losers_surfaces_good_tag_pair():
+    similar = [_trade(f"l{i}", "Loss", m15Confirmations=["Mitigated Order Block"]) for i in range(4)]
+    candidate = {"m15Confirmations": ["Fresh Order Block"]}
+    result = build_characteristic_gaps(candidate, similar)
+    assert any("Fresh Order Block" in r for r in result["betterThanLosers"])
+
+
+def test_better_than_losers_surfaces_higher_rr():
+    similar = [_trade(f"l{i}", "Loss", rr=1.0, m15Confirmations=[]) for i in range(4)]
+    candidate = {"rr": 3.0, "m15Confirmations": []}
+    result = build_characteristic_gaps(candidate, similar)
+    assert any("Risk:Reward" in r for r in result["betterThanLosers"])
+
+
+def test_better_than_losers_never_claims_neutral_categorical_is_better():
+    """Session/pair have no inherent 'better' direction -- must never
+    appear in betterThanLosers even when they differ from losers."""
+    similar = [_trade(f"l{i}", "Loss", session="Asian", m15Confirmations=[]) for i in range(4)]
+    candidate = {"session": "London", "m15Confirmations": []}
+    result = build_characteristic_gaps(candidate, similar)
+    assert not any("session" in r.lower() or "London" in r for r in result["betterThanLosers"])
+
+
+def test_weaknesses_and_better_than_losers_empty_without_enough_data():
+    candidate = {"m15Confirmations": []}
+    result = build_characteristic_gaps(candidate, [])
+    assert result["betterThanLosers"] == []

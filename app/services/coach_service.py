@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import date, datetime, timedelta
+from typing import Any
+
 from app.engines.coach_deep_dive_engine import build_deep_dive
 from app.engines.coach_engine import generate_coach_insights
 from app.engines.mistake_engine import analyze_mistakes
 from app.engines.edge_pattern_engine import build_edge_patterns
+from app.engines.mentor_report_engine import build_mentor_report
 from app.engines.pattern_discovery_engine import build_discovered_patterns
 from app.engines.playbook_engine import build_playbook
 from app.engines.setup_engine import analyze_setups
@@ -82,6 +86,46 @@ class CoachService:
             return build_discovered_patterns(entries)
 
         return await coach_cache.get_or_set(("discoveredPatterns", user_id), compute)
+
+    @staticmethod
+    def _entry_date(entry: dict[str, Any]) -> date | None:
+        raw = entry.get("date")
+        if not raw:
+            return None
+        try:
+            return datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    async def mentor_report(self, user_id: int, period: str = "week") -> dict:
+        """Sprint 20 Phase 7 -- "AI Trade Mentor" periodic coaching
+        report. Fetches the FULL unfiltered history once (needed anyway
+        for the winner/loser characteristic call-outs, which want as
+        large a sample as possible) and slices it into this period's
+        window and the prior, equal-length window in Python -- see
+        app/engines/mentor_report_engine.py's docstring for why this is
+        a thin composition layer rather than a new stats engine."""
+        days = 30 if period == "month" else 7
+        filters = StatsFilters()
+
+        async def compute() -> dict:
+            entries = await self.stats_service.raw_history(user_id, filters)
+            today = date.today()
+            period_start = today - timedelta(days=days)
+            previous_start = today - timedelta(days=days * 2)
+            period_entries = []
+            previous_entries = []
+            for e in entries:
+                d = self._entry_date(e)
+                if d is None:
+                    continue
+                if d >= period_start:
+                    period_entries.append(e)
+                elif previous_start <= d < period_start:
+                    previous_entries.append(e)
+            return build_mentor_report(period_entries, previous_entries, entries, period_label=period)
+
+        return await coach_cache.get_or_set(("mentorReport", user_id, period), compute)
 
     async def deep_dive(self, user_id: int) -> dict:
         """Sprint 8 Phase 6 — ``GET /coach/deep-dive``. Same cached
