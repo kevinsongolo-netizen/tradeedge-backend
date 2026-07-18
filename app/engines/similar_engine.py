@@ -72,6 +72,13 @@ DEFAULT_SIMILARITY_WEIGHTS: dict[str, float] = {
     # mentioned FVG) -- same weight/mechanism as the other 3 structural
     # tags above.
     "fvg": 6,
+    # Sprint 20 Phase 5 -- chart timeframe (M15/H1/...) was already read
+    # off every screenshot by the vision provider but never actually
+    # compared -- a fresh pre-trade candidate never carried it through
+    # to the similarity search. Modest weight, similar to premiumDiscount
+    # -- a real distinguishing feature of a setup, but shouldn't dominate
+    # direction/pair/POI.
+    "timeframe": 3,
     "news": 3,
     "rr": 6,
     "confidence": 3,
@@ -278,6 +285,8 @@ def _feature_similarity(feature: str, candidate: dict, entry: dict, candidate_ta
         return _distance_pct_similarity(a, b)
     if feature == "orderType":
         return _order_type_similarity(candidate.get("orderType"), entry.get("orderType"))
+    if feature == "timeframe":
+        return _cat_equal(candidate.get("timeframe"), entry.get("timeframe"))
     return 0.0
 
 
@@ -315,6 +324,8 @@ def _feature_present(feature: str, candidate: dict, candidate_tags: list[str]) -
         return _target_distance_pct(candidate.get("entry"), candidate.get("tp")) is not None
     if feature == "orderType":
         return _order_type_category(candidate.get("orderType")) is not None
+    if feature == "timeframe":
+        return bool(candidate.get("timeframe"))
     return False
 
 
@@ -378,7 +389,14 @@ def search_similar(
             )
         similarity = (100 * raw_score / present_weight) if present_weight > 0 else 0.0
         contributions.sort(key=lambda c: c["contribution"], reverse=True)
-        scored.append({"entry": entry, "similarity": similarity, "contributions": contributions[:3]})
+        # Sprint 20 Phase 5 -- keep the FULL per-dimension breakdown, not
+        # just the top 3. setup_insight_engine's _contribution_reasons
+        # still only surfaces the top 3 as the short "why this is
+        # similar" bullet list, but the new similarity_breakdown output
+        # (a full checkmark/x-mark checklist across every dimension
+        # that was actually evaluated) needs every one of them, not a
+        # pre-truncated subset.
+        scored.append({"entry": entry, "similarity": similarity, "contributions": contributions})
 
     scored = [s for s in scored if s["similarity"] >= min_similarity]
     scored.sort(key=lambda s: (s["similarity"], abs(s["entry"].get("pnl") or 0)), reverse=True)

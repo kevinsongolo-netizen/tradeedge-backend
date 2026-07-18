@@ -272,6 +272,18 @@ class SetupExtraction(CamelModel):
     number_consistency_warning: str | None = None
 
 
+class SimilarityBreakdownRow(CamelModel):
+    """Sprint 20 Phase 5 -- one row of "why is this X% similar":
+    a single dimension (pair, direction, session, ...), whether it
+    matched, and its raw 0-1 similarity score. See
+    ``app/engines/setup_insight_engine.py``'s ``_similarity_breakdown``."""
+
+    feature: str
+    label: str
+    matched: bool
+    similarity: float
+
+
 class SimilarTradeSummary(CamelModel):
     """One historical trade surfaced as supporting evidence for the
     insight narrative -- e.g. "closest match: a loss on 2026-05-02"."""
@@ -286,6 +298,17 @@ class SimilarTradeSummary(CamelModel):
     rr: float | None = None
     r_multiple: str | None = None  # signed display string, e.g. "+2.5R" / "-1.0R"
     reasons: list[str] = Field(default_factory=list)  # e.g. ["Same direction (SELL)", "Similar stop size"]
+    # Sprint 20 Phase 5 -- this past trade's own pre-trade screenshot, so
+    # the trader can visually compare it against the current setup, not
+    # just read a similarity percentage. None whenever that trade has no
+    # saved entry screenshot (logged before screenshots existed, or
+    # storage wasn't configured at the time).
+    screenshot_url: str | None = None
+    # Sprint 20 Phase 5 -- the FULL matched/mismatched checklist behind
+    # the similarity %, e.g. [Same pair, Same direction, Different
+    # session, Different trend, ...] -- not just the curated `reasons`
+    # above.
+    breakdown: list[SimilarityBreakdownRow] = Field(default_factory=list)
 
 
 class CharacteristicGaps(CamelModel):
@@ -299,6 +322,12 @@ class CharacteristicGaps(CamelModel):
     losing_trade_count: int
     winner_gaps: list[str] = Field(default_factory=list)
     loser_echoes: list[str] = Field(default_factory=list)
+    # Sprint 20 Phase 5 -- "This setup only matches 2 of those 5
+    # characteristics." 0/0/None whenever there weren't enough winners
+    # to build a profile from at all (see winning_trade_count).
+    winner_match_count: int = 0
+    winner_match_total: int = 0
+    winner_match_summary: str | None = None
 
 
 class SetupInsight(CamelModel):

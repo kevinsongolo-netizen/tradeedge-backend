@@ -179,3 +179,24 @@ def test_full_analysis_image_includes_full_fingerprint(client):
     # text, not just the narrow extraction fields already covered above.
     for field in ("premiumDiscount", "fvgStatus", "latestEvent", "poiType", "liquidity"):
         assert field in fingerprint
+
+
+def test_full_analysis_image_accepts_session_hint_and_uses_it_for_comparison(client):
+    """Sprint 20 Phase 5 -- the vision model can't read "session" off a
+    screenshot, so the frontend passes its own already-detected session
+    in as session_hint; the live candidate must actually use it as a
+    similarity dimension (previously session was silently never
+    compared for a fresh pre-trade read, only for already-saved
+    trades)."""
+    for i in range(6):
+        client.post("/api/v1/trades", json={**_PLACEHOLDER_TRADE, "id": f"session-hist-{i}", "session": "London"})
+
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files, data={"session_hint": "London"})
+    assert resp.status_code == 200, resp.text
+    insight = resp.json()["insight"]
+    assert insight["sampleSize"] >= 1
+    top = insight["topSimilar"][0]
+    features = {b["feature"]: b for b in top["breakdown"]}
+    assert "session" in features
+    assert features["session"]["matched"] is True

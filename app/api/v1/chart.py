@@ -18,7 +18,7 @@ along with the rule engines they depended on -- see ``app/_legacy/``.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
@@ -76,6 +76,15 @@ async def analyze_image(file: UploadFile = File(...)) -> ChartAnalysisResponse:
 )
 async def full_analysis_image(
     file: UploadFile = File(...),
+    # Sprint 20 Phase 5 -- the vision model never reads "session" off a
+    # screenshot (there's no session label on a chart) -- the frontend
+    # already knows the CURRENT session (its own session-detect call,
+    # previously only used to pre-fill the journal form after the fact).
+    # Passing it in here means the live pre-trade similarity comparison
+    # can also use session as a fingerprint dimension, not just already-
+    # saved trades. Optional and best-effort: None just means this
+    # candidate skips the session dimension, same as it always has.
+    session_hint: str | None = Form(None),
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db_session),
 ) -> ChartSetupInsightResponse:
@@ -85,7 +94,9 @@ async def full_analysis_image(
     if len(image_bytes) > MAX_IMAGE_BYTES:
         raise ValidationError("Image too large — please upload a screenshot under 8MB.")
     service = ChartService(session)
-    result = await service.full_analysis_from_image(image_bytes, file.content_type, user_id=user_id)
+    result = await service.full_analysis_from_image(
+        image_bytes, file.content_type, user_id=user_id, session_hint=session_hint,
+    )
     return ChartSetupInsightResponse(
         extraction=SetupExtraction(**result["extraction"]),
         insight=SetupInsight(**result["insight"]),

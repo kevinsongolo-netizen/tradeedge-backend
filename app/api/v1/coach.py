@@ -10,6 +10,7 @@ from app.deps import get_current_user_id
 from app.schemas.coach import (
     CoachDeepDive,
     CoachInsightsResponse,
+    EdgePatternsResponse,
     PlaybookResponse,
     TradeReviewRequest,
     TradeReviewResult,
@@ -65,6 +66,26 @@ async def coach_playbook(
     service = CoachService(session)
     result = await service.playbook(user_id)
     return PlaybookResponse(**result)
+
+
+@router.get(
+    "/edge-patterns",
+    response_model=EdgePatternsResponse,
+    summary="Sprint 20 Phase 5 — Best Pattern (multi-dimensional edge: pair+direction+timeframe+POI+zone+session)",
+)
+async def coach_edge_patterns(
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> EdgePatternsResponse:
+    """"Once enough trades exist, I want the AI to automatically
+    discover my edge" -- ranked purely from this trader's own logged
+    history, never a hardcoded "good" combination. A pattern only
+    appears once that exact six-dimension combination has been logged
+    enough times to mean something (see
+    app/engines/edge_pattern_engine.py's EDGE_MIN_SAMPLE)."""
+    service = CoachService(session)
+    result = await service.edge_patterns(user_id)
+    return EdgePatternsResponse(**result)
 
 
 @router.post(

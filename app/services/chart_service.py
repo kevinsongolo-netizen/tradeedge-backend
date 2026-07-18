@@ -66,7 +66,7 @@ class ChartService:
         return analysis_dict, meta
 
     async def full_analysis_from_image(
-        self, image_bytes: bytes, mime_type: str, *, user_id: int,
+        self, image_bytes: bytes, mime_type: str, *, user_id: int, session_hint: str | None = None,
     ) -> dict[str, Any]:
         """The screenshot-first workflow's one call: read the
         screenshot, compare it against the trader's own trade history,
@@ -102,6 +102,13 @@ class ChartService:
         meta["screenshotUrl"] = screenshot_url
 
         candidate = candidate_from_vision_extraction(raw)
+        # Sprint 20 Phase 5 -- the vision model can't read "session" off
+        # a screenshot (nothing on the chart shows it); the frontend's
+        # own session-detect call supplies it instead, so the live
+        # pre-trade comparison uses it as a fingerprint dimension too,
+        # not just already-saved trades. Best-effort/optional.
+        if session_hint:
+            candidate["session"] = session_hint
         trade_repo = TradeRepository(self.session)
         history = [t.to_engine_dict() for t in await trade_repo.list_all(user_id)]
         insight = build_setup_insight(candidate, history, raw_extraction=raw)

@@ -97,6 +97,33 @@ class PlaybookResponse(CamelModel):
     sample_size: int
 
 
+class EdgePattern(CamelModel):
+    """One row of "Best Pattern" (Sprint 20 Phase 5) -- a full
+    pair+direction+timeframe+POI-type+premium/discount-zone+session
+    COMBINATION the trader has logged at least a few times, with its
+    win rate/R:R/expectancy. See app/engines/edge_pattern_engine.py."""
+
+    pair: str | None = None
+    direction: str | None = None
+    timeframe: str | None = None
+    poi_type: str | None = None
+    premium_discount: str | None = None
+    session: str | None = None
+    count: int
+    wins: int
+    losses: int
+    breakeven: int
+    win_rate: float
+    average_rr: float | None = None
+    expectancy: float
+
+
+class EdgePatternsResponse(CamelModel):
+    patterns: list[EdgePattern] = Field(default_factory=list)
+    sample_size: int
+    has_enough_data: bool
+
+
 class TradeReviewResult(CamelModel):
     outcome: str  # "WIN" | "LOSS" | "BREAKEVEN" | "UNKNOWN"
     headline: str

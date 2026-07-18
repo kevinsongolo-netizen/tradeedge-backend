@@ -89,6 +89,14 @@ def candidate_from_vision_extraction(extraction: dict[str, Any]) -> dict[str, An
         # Sprint 20 Phase 4 -- market/limit/stop as its own similarity
         # dimension (see app/engines/similar_engine.py's orderType feature).
         "orderType": extraction.get("orderType"),
+        # Sprint 20 Phase 5 -- this was read off the screenshot all
+        # along (the vision provider already returns it -- see
+        # VISION_ANALYSIS_SCHEMA_HINT's "timeframe" field) but was never
+        # actually carried into the candidate used for similarity
+        # comparison, so a fresh pre-trade read never compared M15 vs H1
+        # setups against each other -- fixed here now that timeframe is
+        # also a similarity dimension.
+        "timeframe": extraction.get("timeframe"),
     }
 
 
@@ -113,9 +121,20 @@ def _average(values: list[float]) -> float | None:
 _REASON_MIN_SIMILARITY = 0.6
 
 
+# Sprint 20 Phase 5 -- contributions are no longer pre-truncated to the
+# top 3 by the similarity engine (see similar_engine.search_similar),
+# since the new full breakdown below needs every evaluated dimension.
+# This function still only surfaces a short, curated "why" list, so it
+# caps itself at the top 3 qualifying reasons -- same effective limit
+# as before, just enforced here now instead of upstream.
+_MAX_REASONS = 3
+
+
 def _contribution_reasons(contributions: list[dict], candidate: dict, entry: dict) -> list[str]:
     reasons: list[str] = []
     for c in contributions:
+        if len(reasons) >= _MAX_REASONS:
+            break
         feature = c.get("feature")
         sim = c.get("similarity") or 0
         if sim < _REASON_MIN_SIMILARITY:
@@ -159,7 +178,84 @@ def _contribution_reasons(contributions: list[dict], candidate: dict, entry: dic
             reasons.append("Similar news risk")
         elif feature == "orderType":
             reasons.append("Same order type (market/limit/stop)")
+        elif feature == "timeframe":
+            reasons.append(f"Same timeframe ({entry.get('timeframe')})")
     return reasons
+
+
+# Sprint 20 Phase 5 -- "explain why the similarity score is what it is."
+# A neutral, short label per dimension for the FULL checklist (every
+# dimension actually evaluated for this comparison, not just the
+# curated top-3 "reasons" above) -- rendered as "checkmark Same X" /
+# "x-mark Different X" in the UI, so the trader can see exactly which
+# characteristics did and didn't line up, not just a bare percentage.
+_BREAKDOWN_LABELS: dict[str, str] = {
+    "pair": "pair",
+    "direction": "direction",
+    "asset": "asset class",
+    "session": "session",
+    "h4Trend": "trend",
+    "h4PoiType": "Order Block / POI type",
+    "premiumDiscount": "Premium/Discount zone",
+    "bos": "BOS",
+    "choch": "CHoCH",
+    "liquiditySweep": "liquidity sweep",
+    "fvg": "FVG",
+    "rr": "Risk:Reward",
+    "stopDistancePct": "stop size",
+    "targetDistancePct": "target size",
+    "entryProximity": "entry price",
+    "lots": "position size",
+    "confidence": "read confidence",
+    "news": "news risk",
+    "orderType": "order type",
+    "timeframe": "timeframe",
+}
+
+# Same bar as _REASON_MIN_SIMILARITY, named separately since it answers
+# a different question here ("close enough to mark this dimension as a
+# match on the checklist" vs. "good enough to earn a spot in the short
+# curated reasons list").
+_BREAKDOWN_MATCH_THRESHOLD = 0.6
+
+
+def _similarity_breakdown(contributions: list[dict]) -> list[dict[str, Any]]:
+    """Full per-dimension checklist for one similar trade: every
+    feature that was actually evaluated for this comparison (present on
+    the candidate, per similar_engine's own present-feature gating),
+    marked matched/mismatched. This is deliberately NOT filtered down to
+    only the good matches (unlike _contribution_reasons) -- the whole
+    point is to show the trader the mismatches too ("Different
+    session", "Different trend"), which is what actually explains a
+    middling score like 51%."""
+    rows: list[dict[str, Any]] = []
+    for c in contributions:
+        feature = c.get("feature")
+        label = _BREAKDOWN_LABELS.get(feature)
+        if not label:
+            continue
+        sim = c.get("similarity") or 0
+        rows.append({
+            "feature": feature,
+            "label": label,
+            "matched": sim >= _BREAKDOWN_MATCH_THRESHOLD,
+            "similarity": round(sim, 2),
+        })
+    return rows
+
+
+def _entry_screenshot_url(entry: dict[str, Any]) -> str | None:
+    """The pre-trade ("entry") screenshot saved on a logged trade, if
+    any -- same helper as ``app/engines/playbook_engine.py``'s (kept as
+    its own small copy here rather than a cross-engine import, per this
+    app's convention of each engine staying self-contained). Used so
+    the trader can visually compare their current setup's screenshot
+    against each similar past trade's, not just read a similarity
+    percentage."""
+    for shot in entry.get("screenshots") or []:
+        if isinstance(shot, dict) and shot.get("kind") == "entry" and shot.get("url"):
+            return shot["url"]
+    return None
 
 
 def _r_multiple_display(rr: float | None, outcome: str | None) -> str | None:
@@ -399,6 +495,13 @@ def build_setup_insight(
             "rr": _num(s.get("rr")),
             "rMultiple": _r_multiple_display(_num(s.get("rr")), s.get("outcome")),
             "reasons": _contribution_reasons(s.get("contributions") or [], candidate, s),
+            # Sprint 20 Phase 5 -- so the trader can look at this past
+            # trade's own chart alongside its stats, not just read a %.
+            "screenshotUrl": _entry_screenshot_url(s),
+            # Sprint 20 Phase 5 -- "explain why the similarity score is
+            # what it is" -- full matched/mismatched checklist, not just
+            # the curated top-3 reasons above.
+            "breakdown": _similarity_breakdown(s.get("contributions") or []),
         }
         for s in similar[:TOP_SIMILAR_DISPLAY_COUNT]
     ]

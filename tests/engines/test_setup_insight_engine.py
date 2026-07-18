@@ -313,3 +313,103 @@ def test_characteristic_gaps_absent_stats_when_thin_history():
     thin_history = [{"id": "1", "pair": "GOLDmicro", "direction": "sell", "pnl": 10}]
     insight = build_setup_insight(candidate, thin_history)
     assert "characteristicGaps" not in insight or insight.get("characteristicGaps") is None
+
+
+def test_top_similar_includes_the_matched_trades_own_screenshot():
+    """Sprint 20 Phase 5 -- each similar trade card must carry that
+    past trade's own entry screenshot URL, so the trader can visually
+    compare it to the current setup, not just read a similarity %."""
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+         "entry": 4000.0, "sl": 4010.0, "tp": 3970.0, "rr": 3.0, "pnl": 60.0,
+         "screenshots": [{"url": "https://cdn.example/entry.png", "kind": "entry"}]}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+                 "entry": 4001.0, "sl": 4011.0, "tp": 3971.0, "rr": 3.0}
+    insight = build_setup_insight(candidate, matches)
+    assert insight["topSimilar"], "expected at least one similar match"
+    for s in insight["topSimilar"]:
+        assert s["screenshotUrl"] == "https://cdn.example/entry.png"
+
+
+def test_top_similar_screenshot_url_is_none_when_trade_has_no_screenshot():
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+         "entry": 4000.0, "sl": 4010.0, "tp": 3970.0, "rr": 3.0, "pnl": 60.0}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+                 "entry": 4001.0, "sl": 4011.0, "tp": 3971.0, "rr": 3.0}
+    insight = build_setup_insight(candidate, matches)
+    for s in insight["topSimilar"]:
+        assert s["screenshotUrl"] is None
+
+
+def test_top_similar_breakdown_shows_both_matches_and_mismatches():
+    """Sprint 20 Phase 5 -- 'explain why the similarity score is what it
+    is': the breakdown must include dimensions that DIDN'T match too
+    (Different session, Different trend, ...), not just the good ones."""
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+         "entry": 4000.0, "sl": 4010.0, "tp": 3970.0, "rr": 3.0, "pnl": 60.0,
+         "session": "New York", "h4Trend": "Bullish"}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+                 "entry": 4001.0, "sl": 4011.0, "tp": 3971.0, "rr": 3.0,
+                 "session": "London", "h4Trend": "Bearish"}
+    insight = build_setup_insight(candidate, matches)
+    assert insight["topSimilar"], "expected at least one similar match"
+    row = insight["topSimilar"][0]
+    breakdown = row["breakdown"]
+    by_feature = {b["feature"]: b for b in breakdown}
+    # Same pair/direction/asset/rr -> matched.
+    assert by_feature["pair"]["matched"] is True
+    assert by_feature["direction"]["matched"] is True
+    # Different session/trend -> present in the breakdown AND marked mismatched.
+    assert by_feature["session"]["matched"] is False
+    assert by_feature["h4Trend"]["matched"] is False
+    # Every row has a human label, not just the raw feature key.
+    assert all(b["label"] for b in breakdown)
+
+
+def test_breakdown_only_includes_dimensions_actually_evaluated():
+    """A dimension the candidate never set (e.g. no session given) must
+    not appear in the breakdown at all -- nothing to explain about a
+    comparison that was never made."""
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "session": "London", "pnl": 5}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell"}  # no session set
+    insight = build_setup_insight(candidate, matches)
+    row = insight["topSimilar"][0]
+    features = {b["feature"] for b in row["breakdown"]}
+    assert "session" not in features
+
+
+def test_reasons_list_still_capped_at_three_after_untruncating_contributions():
+    """similar_engine no longer pre-truncates contributions to the top 3
+    -- _contribution_reasons must still cap its own curated output at 3
+    so the short 'why similar' bullet list doesn't balloon."""
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+         "session": "London", "h4Trend": "Bearish", "premiumDiscount": "Discount",
+         "entry": 4000.0, "sl": 4010.0, "tp": 3970.0, "rr": 3.0, "pnl": 60.0,
+         "m15Confirmations": ["BOS", "CHOCH", "Liquidity Sweep", "FVG"]}
+        for i in range(5)
+    ]
+    candidate = dict(matches[0])
+    candidate["id"] = "candidate"
+    insight = build_setup_insight(candidate, matches)
+    assert len(insight["topSimilar"][0]["reasons"]) <= 3
+
+
+def test_candidate_from_vision_extraction_maps_timeframe():
+    """Sprint 20 Phase 5 -- timeframe was read off every screenshot all
+    along (see VISION_ANALYSIS_SCHEMA_HINT) but never carried into the
+    candidate used for similarity comparison until now."""
+    extraction = {"pair": "EURUSD", "orderDirection": "BUY", "timeframe": "M15"}
+    candidate = candidate_from_vision_extraction(extraction)
+    assert candidate["timeframe"] == "M15"

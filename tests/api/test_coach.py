@@ -160,3 +160,56 @@ def test_playbook_surfaces_a_setup_with_enough_samples_and_example_screenshot(cl
     assert setup["bestSession"] == "London"
     assert len(setup["exampleScreenshots"]) >= 1
     assert "averageHoldingTime" not in setup
+
+
+def test_edge_patterns_empty_with_no_trades(client):
+    resp = client.get("/api/v1/coach/edge-patterns")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["patterns"] == []
+    assert body["hasEnoughData"] is False
+    assert body["sampleSize"] == 0
+
+
+def test_edge_patterns_surfaces_a_full_six_dimension_combination(client):
+    for i in range(4):
+        client.post(
+            "/api/v1/trades",
+            json={
+                "id": f"edge{i}",
+                "date": f"2026-01-0{i + 1}",
+                "pair": "BTCUSD",
+                "direction": "sell",
+                "timeframe": "M15",
+                "h4PoiType": "Bearish Order Block",
+                "premiumDiscount": "Premium",
+                "session": "London",
+                "pnl": 50.0 if i < 3 else -20.0,
+                "rr": 2.8,
+            },
+        )
+    resp = client.get("/api/v1/coach/edge-patterns")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["hasEnoughData"] is True
+    assert len(body["patterns"]) == 1
+    p = body["patterns"][0]
+    assert p["pair"] == "BTCUSD"
+    assert p["direction"] == "sell"
+    assert p["timeframe"] == "M15"
+    assert p["poiType"] == "Bearish Order Block"
+    assert p["premiumDiscount"] == "Premium"
+    assert p["session"] == "London"
+    assert p["count"] == 4
+    assert p["wins"] == 3
+    assert p["winRate"] == 75.0
+
+
+def test_edge_patterns_excludes_trades_missing_any_dimension(client):
+    client.post(
+        "/api/v1/trades",
+        json={"id": "edge-partial", "date": "2026-01-01", "pair": "EURUSD", "direction": "buy", "pnl": 10.0},
+    )
+    resp = client.get("/api/v1/coach/edge-patterns")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["patterns"] == []

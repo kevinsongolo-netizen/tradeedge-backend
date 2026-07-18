@@ -186,3 +186,23 @@ def test_fvg_presence_matching_scores_higher_than_mismatched():
     result = search_similar(candidate, [has_fvg, no_fvg], min_similarity=0)
     by_id = {m["id"]: m["similarity"] for m in result["similar"]}
     assert by_id["match"] > by_id["mismatch"]
+
+
+def test_timeframe_matching_scores_higher_than_mismatched():
+    """Sprint 20 Phase 5 -- timeframe (M15/H1/...) was read off every
+    screenshot all along but never actually compared. Same
+    direction/pair on both comparisons so timeframe is the only thing
+    that differs."""
+    candidate = {"id": "cand", "pair": "EURUSD", "direction": "buy", "timeframe": "M15"}
+    same_tf = {"id": "match", "pair": "EURUSD", "direction": "buy", "timeframe": "M15", "pnl": 5}
+    diff_tf = {"id": "mismatch", "pair": "EURUSD", "direction": "buy", "timeframe": "H4", "pnl": -5}
+    result = search_similar(candidate, [same_tf, diff_tf], min_similarity=0)
+    by_id = {m["id"]: m["similarity"] for m in result["similar"]}
+    assert by_id["match"] > by_id["mismatch"]
+
+
+def test_timeframe_absent_when_not_set():
+    candidate = {"id": "a", "pair": "EURUSD", "direction": "buy"}
+    entry = {"id": "b", "pair": "EURUSD", "direction": "buy", "timeframe": "M15", "pnl": 5}
+    result = search_similar(candidate, [entry], min_similarity=0)
+    assert len(result["similar"]) == 1
