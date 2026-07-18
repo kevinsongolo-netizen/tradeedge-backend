@@ -60,6 +60,11 @@ class Trade(Base):
     pair: Mapped[str | None] = mapped_column(String(32), nullable=True)
     direction: Mapped[str | None] = mapped_column(String(8), nullable=True)
     asset: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Sprint 20 Phase 4 -- read by the vision provider today but not
+    # persisted until now; only ever shown live in Chart Analysis
+    # Engine's extraction display.
+    timeframe: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    order_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     entry: Mapped[float | None] = mapped_column(Float, nullable=True)
     exit_price: Mapped[float | None] = mapped_column("exit", Float, nullable=True)
     sl: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -88,6 +93,15 @@ class Trade(Base):
     failed_tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     screenshots: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
+    # Sprint 20 Phase 4 -- real open/close timestamps (the existing
+    # ``date`` column has no time-of-day) so "time in trade" can be
+    # computed, plus the complete raw vision read so nothing the vision
+    # model detects is silently discarded just because it doesn't have
+    # its own dedicated column yet. See migration 0007's docstring.
+    entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    vision_fingerprint: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Cached from the latest ai_analyses row — see app/services/ai_service.py.
     rule_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     execution_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -111,6 +125,29 @@ class Trade(Base):
         order_by="AIAnalysis.created_at.desc()",
     )
 
+    @property
+    def time_in_trade_minutes(self) -> float | None:
+        """Minutes between entered_at/closed_at -- None whenever either
+        is missing (a trade logged before Sprint 20 Phase 4, or one
+        that's still open). Never estimated or backfilled from ``date``
+        alone -- a date has no time-of-day, so there's nothing honest
+        to compute it from for older rows.
+
+        Strips tzinfo before subtracting: SQLite has no real timezone
+        type, so a value just round-tripped through the DB comes back
+        naive even though it was stamped timezone-aware (UTC) in
+        Python moments earlier in the same request -- without this,
+        computing this property in the middle of the same
+        create/update call that just set one of the two fields raises
+        "can't subtract offset-naive and offset-aware datetimes".
+        Every timestamp this app ever writes is UTC, so a naive
+        comparison is safe."""
+        if self.entered_at is None or self.closed_at is None:
+            return None
+        entered = self.entered_at.replace(tzinfo=None)
+        closed = self.closed_at.replace(tzinfo=None)
+        return (closed - entered).total_seconds() / 60.0
+
     def to_engine_dict(self) -> dict[str, Any]:
         """Flattens this row into the plain camelCase dict shape every
         pure engine function (``app/engines/*.py``) expects — the exact
@@ -122,6 +159,8 @@ class Trade(Base):
             "pair": self.pair,
             "direction": self.direction,
             "asset": self.asset,
+            "timeframe": self.timeframe,
+            "orderType": self.order_type,
             "entry": self.entry,
             "exit": self.exit_price,
             "sl": self.sl,
@@ -146,6 +185,10 @@ class Trade(Base):
             "workedTags": self.worked_tags or [],
             "failedTags": self.failed_tags or [],
             "screenshots": self.screenshots or [],
+            "enteredAt": self.entered_at.isoformat() if self.entered_at else None,
+            "closedAt": self.closed_at.isoformat() if self.closed_at else None,
+            "timeInTradeMinutes": self.time_in_trade_minutes,
+            "visionFingerprint": self.vision_fingerprint,
             "ruleScore": self.rule_score,
             "executionScore": self.execution_score,
             "overallScore": self.overall_score,

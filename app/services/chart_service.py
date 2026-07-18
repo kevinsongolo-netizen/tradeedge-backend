@@ -106,7 +106,20 @@ class ChartService:
         history = [t.to_engine_dict() for t in await trade_repo.list_all(user_id)]
         insight = build_setup_insight(candidate, history, raw_extraction=raw)
 
-        return {"extraction": extraction, "insight": insight, "meta": meta}
+        # Sprint 20 Phase 4 -- the "complete trade fingerprint" ask.
+        # ``extraction`` above is the narrow, UI-facing subset used for
+        # display; ``fingerprint`` is the *entire* raw vision read
+        # (trend, structure, order-block/FVG/BOS/CHOCH text, liquidity,
+        # premium/discount, the trader's own entry/SL/TP/R:R, etc. --
+        # everything in VISION_ANALYSIS_SCHEMA_HINT plus provider/
+        # confidence metadata) verbatim, so the frontend can carry it
+        # through unmodified into ``POST /trades``'s ``visionFingerprint``
+        # field and the trade keeps a full record of exactly what the AI
+        # saw on the screenshot, not just the handful of fields the UI
+        # happens to render today.
+        fingerprint = dict(raw)
+
+        return {"extraction": extraction, "insight": insight, "meta": meta, "fingerprint": fingerprint}
 
     async def upload_screenshot(self, image_bytes: bytes, mime_type: str, *, folder: str = "tradeedge/exits") -> dict[str, Any]:
         """Sprint 20 Phase 3 -- plain screenshot upload with no vision

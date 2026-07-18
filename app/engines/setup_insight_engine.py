@@ -20,12 +20,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.engines.characteristic_gap_engine import build_characteristic_gaps
 from app.engines.similar_engine import search_similar
 
 MIN_TOTAL_HISTORY_FOR_INSIGHT = 5
 DEFAULT_MIN_SIMILARITY = 40.0
 DEFAULT_LIMIT = 10
 TOP_SIMILAR_DISPLAY_COUNT = 5
+
+# Sprint 20 Phase 4 -- a win rate computed from 1-2 similar trades is not
+# a statistic, it's a coin flip wearing a percentage sign. Below this many
+# similar trades, winRate/averageRR/averageProfit are withheld entirely
+# (None, not a real-but-misleading number) and the narrative says so
+# plainly instead of stating e.g. "0% win rate" or "100% win rate" as if
+# it meant something -- matches the same MIN_SIMILAR_FOR_LESSON=3 bar
+# already used by app/engines/trade_lesson_engine.py for the same reason.
+MIN_SIMILAR_FOR_CONFIDENT_STAT = 3
 
 
 def _num(value: Any) -> float | None:
@@ -50,12 +60,19 @@ def candidate_from_vision_extraction(extraction: dict[str, Any]) -> dict[str, An
     tags: list[str] = []
     latest_event = (extraction.get("latestEvent") or "")
     liquidity = (extraction.get("liquidity") or "")
+    fvg_status = (extraction.get("fvgStatus") or "")
     if "bos" in latest_event.lower():
         tags.append("BOS")
     if "choch" in latest_event.lower() or "choch" in latest_event.lower().replace("ho", "o"):
         tags.append("CHOCH")
     if "sweep" in liquidity.lower():
         tags.append("Liquidity Sweep")
+    # Sprint 20 Phase 4 -- FVG as its own similarity dimension (previously
+    # only folded into h4PoiType when the POI label itself said "FVG").
+    # Same honesty filter _detected_summary already uses for this field --
+    # "None"/"N/A"/"No FVG"/empty never counts as a real FVG present.
+    if fvg_status.strip().lower() not in ("", "none", "n/a", "no fvg"):
+        tags.append("FVG")
 
     return {
         "pair": extraction.get("pair"),
@@ -69,6 +86,9 @@ def candidate_from_vision_extraction(extraction: dict[str, Any]) -> dict[str, An
         "h4PoiType": extraction.get("poiType"),
         "premiumDiscount": extraction.get("premiumDiscount"),
         "m15Confirmations": tags,
+        # Sprint 20 Phase 4 -- market/limit/stop as its own similarity
+        # dimension (see app/engines/similar_engine.py's orderType feature).
+        "orderType": extraction.get("orderType"),
     }
 
 
@@ -121,6 +141,8 @@ def _contribution_reasons(contributions: list[dict], candidate: dict, entry: dic
             reasons.append("Both had a CHoCH")
         elif feature == "liquiditySweep":
             reasons.append("Both had a liquidity sweep")
+        elif feature == "fvg":
+            reasons.append("Both had an FVG")
         elif feature == "rr":
             reasons.append("Similar R:R")
         elif feature == "stopDistancePct":
@@ -135,6 +157,8 @@ def _contribution_reasons(contributions: list[dict], candidate: dict, entry: dic
             reasons.append("Similar read confidence")
         elif feature == "news":
             reasons.append("Similar news risk")
+        elif feature == "orderType":
+            reasons.append("Same order type (market/limit/stop)")
     return reasons
 
 
@@ -266,6 +290,7 @@ def build_setup_insight(
             "topSimilar": [],
             "narrative": narrative,
             "riskNotes": [],
+            "lowConfidence": False,
         }
 
     result = search_similar(candidate, history, min_similarity=min_similarity, limit=limit)
@@ -290,20 +315,35 @@ def build_setup_insight(
             "topSimilar": [],
             "narrative": narrative,
             "riskNotes": [],
+            "lowConfidence": False,
         }
 
     avg_similarity = _average([s["similarity"] for s in similar]) or 0.0
     wins, losses, breakeven = result["wins"], result["losses"], result["breakeven"]
-    win_rate = result["winRate"]
+    low_confidence = sample_size < MIN_SIMILAR_FOR_CONFIDENT_STAT
+    # Withhold the derived stats entirely when the sample is too thin --
+    # never hand out a "0% win rate" / "100% win rate" that's really just
+    # 1 or 2 trades. wins/losses/breakeven/sampleSize themselves are plain
+    # counts (not rates), so those stay honest and visible either way.
+    win_rate = None if low_confidence else result["winRate"]
+    average_rr = None if low_confidence else result.get("averageRR")
+    average_profit = None if low_confidence else result.get("averageProfit")
 
     narrative: list[str] = [detected] if detected else []
-    win_rate_txt = f"{win_rate:.0f}%" if win_rate is not None else "n/a"
-    narrative.append(
-        f"This setup is {avg_similarity:.0f}% similar on average to {sample_size} of your past "
-        f"{pair_label} trades — {wins} won, {losses} lost"
-        + (f", {breakeven} breakeven" if breakeven else "")
-        + f" ({win_rate_txt} win rate)."
-    )
+    if low_confidence:
+        narrative.append(
+            f"Low confidence: only {sample_size} similar trade{'s' if sample_size != 1 else ''} available "
+            f"({wins}W/{losses}L{f'/{breakeven}BE' if breakeven else ''}, {avg_similarity:.0f}% similar on average). "
+            "Continue journaling before relying on this statistic."
+        )
+    else:
+        win_rate_txt = f"{win_rate:.0f}%" if win_rate is not None else "n/a"
+        narrative.append(
+            f"This setup is {avg_similarity:.0f}% similar on average to {sample_size} of your past "
+            f"{pair_label} trades — {wins} won, {losses} lost"
+            + (f", {breakeven} breakeven" if breakeven else "")
+            + f" ({win_rate_txt} win rate)."
+        )
 
     top = similar[0]
     top_outcome = (top.get("outcome") or "").lower()
@@ -363,6 +403,15 @@ def build_setup_insight(
         for s in similar[:TOP_SIMILAR_DISPLAY_COUNT]
     ]
 
+    # Sprint 20 Phase 4 -- "what characteristics do my winners have that
+    # this doesn't / my losers have that this also has?" Computed from
+    # the SAME similar-trade list above (not a separate history fetch),
+    # and gated on its own honesty bar inside build_characteristic_gaps
+    # -- independent of low_confidence above, since a setup can have too
+    # few similar WINS to trust a win rate while still having plenty of
+    # similar LOSSES to draw an honest loser-echo from (or vice versa).
+    characteristic_gaps = build_characteristic_gaps(candidate, similar)
+
     return {
         "hasEnoughHistory": True,
         "totalHistoryCount": total_history_count,
@@ -371,9 +420,11 @@ def build_setup_insight(
         "losses": losses,
         "breakeven": breakeven,
         "winRate": win_rate,
-        "averageRR": result.get("averageRR"),
-        "averageProfit": result.get("averageProfit"),
+        "averageRR": average_rr,
+        "averageProfit": average_profit,
         "topSimilar": top_similar_out,
         "narrative": narrative,
         "riskNotes": risk_notes,
+        "lowConfidence": low_confidence,
+        "characteristicGaps": characteristic_gaps,
     }

@@ -304,3 +304,111 @@ def test_trade_detail_insight_excludes_the_trade_itself_from_its_own_history(cli
     assert insight_resp.status_code == 200, insight_resp.text
     for top in insight_resp.json()["insight"]["topSimilar"]:
         assert top["id"] != "trade-self-exclude"
+
+
+def test_entered_at_is_auto_stamped_on_first_save_and_never_moves(client):
+    """Sprint 20 Phase 4 -- ``entered_at`` is set automatically the
+    first time a trade is ever saved (so "time in trade" is computable
+    without the trader doing anything extra), and must never move on a
+    later re-save of the same trade (e.g. editing notes)."""
+    resp = client.post("/api/v1/trades", json={**SAMPLE, "id": "trade-ts-1", "exit": None, "pnl": None})
+    assert resp.status_code == 201, resp.text
+    first_entered_at = resp.json()["enteredAt"]
+    assert first_entered_at is not None
+    assert resp.json()["closedAt"] is None
+    assert resp.json()["timeInTradeMinutes"] is None
+
+    resp2 = client.post("/api/v1/trades", json={"id": "trade-ts-1", "notes": "edited later"})
+    assert resp2.status_code == 201, resp2.text
+    assert resp2.json()["enteredAt"] == first_entered_at
+
+
+def test_closed_at_is_auto_stamped_only_once_when_exit_first_set(client):
+    """``closed_at`` is stamped the first time ``exit`` is set on a
+    trade that didn't have one yet, and time_in_trade_minutes becomes
+    computable at that point. Re-saving the already-closed trade again
+    must not move closed_at forward."""
+    resp = client.post("/api/v1/trades", json={**SAMPLE, "id": "trade-ts-2", "exit": None, "pnl": None})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["closedAt"] is None
+
+    resp2 = client.post("/api/v1/trades", json={"id": "trade-ts-2", "exit": 1.0910, "pnl": 60.0})
+    assert resp2.status_code == 201, resp2.text
+    body2 = resp2.json()
+    assert body2["closedAt"] is not None
+    assert body2["timeInTradeMinutes"] is not None
+    assert body2["timeInTradeMinutes"] >= 0
+    first_closed_at = body2["closedAt"]
+
+    resp3 = client.post("/api/v1/trades", json={"id": "trade-ts-2", "notes": "typo fix"})
+    assert resp3.status_code == 201, resp3.text
+    assert resp3.json()["closedAt"] == first_closed_at
+
+
+def test_client_supplied_entered_at_and_closed_at_win_over_auto_stamp(client):
+    """The MT5 auto-journal EA sends its own precise open/close time,
+    which is always more accurate than "whenever this HTTP request
+    happened to arrive" -- an explicitly supplied timestamp must never
+    be overwritten by the auto-stamp."""
+    resp = client.post(
+        "/api/v1/trades",
+        json={
+            **SAMPLE,
+            "id": "trade-ts-3",
+            "exit": None,
+            "pnl": None,
+            "enteredAt": "2026-01-01T09:00:00Z",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["enteredAt"].startswith("2026-01-01T09:00:00")
+
+    resp2 = client.post(
+        "/api/v1/trades",
+        json={
+            "id": "trade-ts-3",
+            "exit": 1.0910,
+            "pnl": 60.0,
+            "closedAt": "2026-01-01T11:30:00Z",
+        },
+    )
+    assert resp2.status_code == 201, resp2.text
+    body2 = resp2.json()
+    assert body2["closedAt"].startswith("2026-01-01T11:30:00")
+    assert body2["timeInTradeMinutes"] == 150.0
+
+
+def test_timeframe_order_type_and_vision_fingerprint_round_trip(client):
+    """Sprint 20 Phase 4 -- the "complete trade fingerprint" fields
+    (timeframe, orderType, visionFingerprint) must save and read back
+    unchanged, same as any other trade field."""
+    fingerprint = {
+        "pair": "XAUUSD",
+        "timeframe": "M15",
+        "orderDirection": "SELL",
+        "orderType": "Sell Limit",
+        "poiType": "Bearish Order Block",
+        "premiumDiscount": "Premium",
+        "latestEvent": "Bearish CHOCH detected",
+        "fvgStatus": "Bearish FVG mitigated",
+        "readConfidence": 82,
+    }
+    resp = client.post(
+        "/api/v1/trades",
+        json={
+            **SAMPLE,
+            "id": "trade-fingerprint-1",
+            "timeframe": "M15",
+            "orderType": "Sell Limit",
+            "visionFingerprint": fingerprint,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["timeframe"] == "M15"
+    assert body["orderType"] == "Sell Limit"
+    assert body["visionFingerprint"] == fingerprint
+
+    get_resp = client.get("/api/v1/trades/trade-fingerprint-1")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["visionFingerprint"] == fingerprint

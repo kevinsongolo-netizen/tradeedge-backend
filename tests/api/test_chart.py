@@ -35,6 +35,16 @@ _PLACEHOLDER_PAIR = "PLACEHOLDER — GOLDmicro (example data)"
 _PLACEHOLDER_TRADE = {
     "date": "2026-01-01", "pair": _PLACEHOLDER_PAIR, "direction": "buy", "asset": "Metals",
     "entry": 2400.0, "exit": 2410.0, "pnl": 50.0, "rr": 2.0, "session": "London",
+    # Sprint 20 Phase 4 -- match PlaceholderVisionProvider's own read
+    # (see app/chart/vision_provider.py) on the newer similarity
+    # dimensions too (orderType, FVG/CHOCH tags), same as the h4PoiType/
+    # premiumDiscount fields below already did before this phase --
+    # otherwise this fixture "mismatches" a candidate built from that
+    # exact same placeholder read on fields it simply never set.
+    "h4PoiType": "PLACEHOLDER — Bullish Order Block (example data)",
+    "premiumDiscount": "Discount",
+    "orderType": "PLACEHOLDER — Buy Limit (example data)",
+    "m15Confirmations": ["CHOCH", "FVG"],
 }
 
 
@@ -149,3 +159,23 @@ def test_full_analysis_image_meta_includes_screenshot_url_field(client):
     # No Cloudinary credentials configured in the test environment --
     # honestly None, never a fake URL.
     assert meta["screenshotUrl"] is None
+
+
+def test_full_analysis_image_includes_full_fingerprint(client):
+    """Sprint 20 Phase 4 -- the response must also carry the complete
+    raw vision read (not just the curated ``extraction`` subset) under
+    ``fingerprint``, so the frontend can save it verbatim onto the
+    trade as ``visionFingerprint`` without losing anything the AI
+    detected on the screenshot."""
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "fingerprint" in body
+    fingerprint = body["fingerprint"]
+    assert fingerprint is not None
+    # A handful of fields that must survive verbatim from the vision
+    # provider's raw output -- structure/liquidity/FVG/premium-discount
+    # text, not just the narrow extraction fields already covered above.
+    for field in ("premiumDiscount", "fvgStatus", "latestEvent", "poiType", "liquidity"):
+        assert field in fingerprint

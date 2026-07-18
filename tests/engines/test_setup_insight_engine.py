@@ -238,3 +238,78 @@ def test_no_raw_extraction_supplied_narrative_unchanged(history):
     candidate["id"] = "brand-new-candidate"
     insight = build_setup_insight(candidate, history)
     assert "similar" in insight["narrative"][0]
+
+
+def test_low_confidence_message_shown_instead_of_misleading_win_rate():
+    """Sprint 20 Phase 4 -- a "0%" or "100%" win rate computed from 1-2
+    similar trades is not a real statistic. Below MIN_SIMILAR_FOR_
+    CONFIDENT_STAT (3), winRate/averageRR/averageProfit must be
+    withheld (None) and the narrative must say so in plain language,
+    even though there IS enough TOTAL history logged overall."""
+    reference = {
+        "id": "match-1", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+        "entry": 4000.0, "sl": 4010.0, "tp": 3970.0, "rr": 3.0, "pnl": -50.0, "outcome": "Loss",
+    }
+    # 4 unrelated trades (different pair/direction/asset) so they fall
+    # below the default similarity threshold and never join the match.
+    padding = [
+        {"id": f"pad-{i}", "pair": "EURUSD", "direction": "buy", "asset": "Forex",
+         "entry": 1.10, "sl": 1.095, "tp": 1.12, "rr": 2.0, "pnl": 20.0, "outcome": "Win"}
+        for i in range(4)
+    ]
+    history = [reference] + padding
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+                 "entry": 4001.0, "sl": 4011.0, "tp": 3971.0, "rr": 3.0}
+
+    insight = build_setup_insight(candidate, history)
+    assert insight["hasEnoughHistory"] is True
+    assert insight["sampleSize"] == 1
+    assert insight["lowConfidence"] is True
+    assert insight["winRate"] is None
+    assert insight["averageRR"] is None
+    assert insight["averageProfit"] is None
+    assert any("Low confidence" in line and "Continue journaling" in line for line in insight["narrative"])
+    # Must NOT state a bare win-rate percentage anywhere in the narrative.
+    assert not any("win rate)." in line for line in insight["narrative"])
+
+
+def test_high_confidence_stats_shown_once_sample_clears_the_bar():
+    """Same shape but with >=3 similar trades -- the normal, confident
+    win-rate narrative and real stats must be present, unaffected by
+    the new low-confidence gate."""
+    matches = [
+        {"id": f"match-{i}", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+         "entry": 4000.0, "sl": 4010.0, "tp": 3970.0, "rr": 3.0, "pnl": 60.0, "outcome": "Win"}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+                 "entry": 4001.0, "sl": 4011.0, "tp": 3971.0, "rr": 3.0}
+
+    insight = build_setup_insight(candidate, matches)
+    assert insight["sampleSize"] >= 3
+    assert insight["lowConfidence"] is False
+    assert insight["winRate"] is not None
+    assert any("win rate)." in line for line in insight["narrative"])
+
+
+def test_build_setup_insight_includes_characteristic_gaps(history):
+    """Sprint 20 Phase 4 -- build_setup_insight must surface the
+    winner/loser characteristic-gap analysis alongside the existing
+    similarity narrative, computed from the same similar-trade list."""
+    reference = history[0]
+    candidate = dict(reference)
+    candidate["id"] = "brand-new-candidate"
+    insight = build_setup_insight(candidate, history)
+    assert "characteristicGaps" in insight
+    gaps = insight["characteristicGaps"]
+    assert "hasEnoughData" in gaps
+    assert "winnerGaps" in gaps and "loserEchoes" in gaps
+
+
+def test_characteristic_gaps_absent_stats_when_thin_history():
+    """When there isn't even enough TOTAL history yet, no gap analysis
+    is attempted (there's no similar list to draw from)."""
+    candidate = {"pair": "GOLDmicro", "direction": "sell", "rr": 1.8}
+    thin_history = [{"id": "1", "pair": "GOLDmicro", "direction": "sell", "pnl": 10}]
+    insight = build_setup_insight(candidate, thin_history)
+    assert "characteristicGaps" not in insight or insight.get("characteristicGaps") is None

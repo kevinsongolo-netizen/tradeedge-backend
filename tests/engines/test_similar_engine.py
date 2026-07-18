@@ -141,3 +141,48 @@ def test_target_distance_pct_contributes_to_similarity():
     result = search_similar(candidate, [close_target, far_target], min_similarity=0)
     by_id = {m["id"]: m["similarity"] for m in result["similar"]}
     assert by_id["close"] > by_id["far"]
+
+
+# --- Sprint 20 Phase 4 -- orderType and FVG as their own dimensions --------
+
+
+def test_order_type_matching_scores_higher_than_mismatched():
+    """Market vs. limit vs. stop, bucketed from free text -- same
+    direction/pair on both candidates so orderType is the only thing
+    that differs between the two comparisons."""
+    candidate = {"id": "cand", "pair": "EURUSD", "direction": "buy", "orderType": "Buy Limit"}
+    same_type = {"id": "match", "pair": "EURUSD", "direction": "buy", "orderType": "Buy Limit", "pnl": 5}
+    diff_type = {"id": "mismatch", "pair": "EURUSD", "direction": "buy", "orderType": "Market", "pnl": -5}
+    result = search_similar(candidate, [same_type, diff_type], min_similarity=0)
+    by_id = {m["id"]: m["similarity"] for m in result["similar"]}
+    assert by_id["match"] > by_id["mismatch"]
+
+
+def test_order_type_ignores_direction_word_same_category():
+    """"Buy Limit" and "Sell Limit" should score as the SAME order-type
+    category (direction is already its own separate dimension) --
+    verified directly against the category helper, not diluted by other
+    similarity dimensions."""
+    from app.engines.similar_engine import _order_type_similarity
+    assert _order_type_similarity("Buy Limit", "Sell Limit") == 1.0
+    assert _order_type_similarity("Buy Limit", "Market") == 0.0
+
+
+def test_order_type_absent_when_not_recognized():
+    """A candidate with no orderType (or unrecognized text) shouldn't
+    have this dimension counted at all -- never blow up either."""
+    candidate = {"id": "a", "pair": "EURUSD", "direction": "buy"}
+    entry = {"id": "b", "pair": "EURUSD", "direction": "buy", "orderType": "Buy Limit", "pnl": 5}
+    result = search_similar(candidate, [entry], min_similarity=0)
+    assert len(result["similar"]) == 1
+
+
+def test_fvg_presence_matching_scores_higher_than_mismatched():
+    """User's own ask: FVG presence should be its own similarity
+    dimension, not just implicitly folded into h4PoiType."""
+    candidate = {"id": "cand", "pair": "GOLDmicro", "direction": "sell", "m15Confirmations": ["FVG"]}
+    has_fvg = {"id": "match", "pair": "GOLDmicro", "direction": "sell", "m15Confirmations": ["FVG"], "pnl": 5}
+    no_fvg = {"id": "mismatch", "pair": "GOLDmicro", "direction": "sell", "m15Confirmations": [], "pnl": -5}
+    result = search_similar(candidate, [has_fvg, no_fvg], min_similarity=0)
+    by_id = {m["id"]: m["similarity"] for m in result["similar"]}
+    assert by_id["match"] > by_id["mismatch"]

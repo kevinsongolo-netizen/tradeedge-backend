@@ -4,6 +4,33 @@
 (binary matching — kept for regression comparisons per Section 6's
 mapping table). ``search_similar`` is the Sprint 6 upgrade: weighted,
 graded similarity per Section 7 of the architecture spec.
+
+Sprint 20 Phase 4 -- dimension coverage review against the trader's own
+"complete trade fingerprint" list (pair, direction, OB type, FVG,
+BOS/CHoCH structure, premium/discount location, session, volatility,
+stop size, target size, chart structure):
+
+  - pair, direction, session, stop size (stopDistancePct), target size
+    (targetDistancePct) -- already covered (Sprint 6 / Phase 2).
+  - OB type -- covered by h4PoiType (the POI label read off the chart,
+    e.g. "Bullish Order Block").
+  - BOS/CHoCH structure -- covered by the bos/choch tag dimensions.
+  - premium/discount location -- covered by premiumDiscount.
+  - FVG -- NEW this phase (``fvg``): previously only implicit inside
+    h4PoiType when the POI label itself said "FVG"; now its own
+    boolean-presence dimension exactly like bos/choch/liquiditySweep.
+  - order type (market/limit/stop) -- NEW this phase (``orderType``):
+    bucketed from the free-text order type MT5/the vision read
+    supplies, ignoring the direction word it also contains (direction
+    is already its own separate dimension).
+  - chart structure -- partially covered via h4Trend (the vision read's
+    "trend" field); the vision schema's separate "structure" field
+    (Bullish/Bearish/Ranging) isn't currently mapped into a candidate at
+    all and would need its own dimension to add real signal beyond
+    h4Trend -- left out of this phase as a smaller, lower-value gap.
+  - volatility -- confirmed infeasible earlier in Phase 4 planning: no
+    OHLC/ATR data is stored per trade to compute it from, and the
+    trader agreed to skip it rather than fake a number.
 """
 from __future__ import annotations
 
@@ -40,6 +67,11 @@ DEFAULT_SIMILARITY_WEIGHTS: dict[str, float] = {
     "bos": 6,
     "choch": 6,
     "liquiditySweep": 6,
+    # Sprint 20 Phase 4 -- FVG presence as its own dimension (was
+    # previously only implicitly covered when the POI label itself
+    # mentioned FVG) -- same weight/mechanism as the other 3 structural
+    # tags above.
+    "fvg": 6,
     "news": 3,
     "rr": 6,
     "confidence": 3,
@@ -55,6 +87,13 @@ DEFAULT_SIMILARITY_WEIGHTS: dict[str, float] = {
     # before."
     "stopDistancePct": 5,
     "targetDistancePct": 5,
+    # Sprint 20 Phase 4 -- market vs. limit vs. stop order is part of the
+    # "complete trade fingerprint" the trader asked for. A modest weight
+    # (similar to premiumDiscount) -- it's a real distinguishing feature
+    # of a setup (did you chase price or wait for it to come to you?) but
+    # shouldn't dominate direction/pair/POI, which say more about the
+    # setup itself.
+    "orderType": 3,
 }
 
 _NEWS_RANK = {"None": 0, "Low": 1, "Medium": 2, "High": 3}
@@ -72,6 +111,30 @@ def _num(value: Any) -> float | None:
 def _tags(entry: dict) -> list[str]:
     value = entry.get("m15Confirmations")
     return value if isinstance(value, list) else []
+
+
+# Sprint 20 Phase 4 -- orderType is free text off the vision read/MT5
+# order panel ("Buy Limit", "Sell Stop", "Market", ...). Direction is
+# already its own dimension, so comparing the RAW string would double
+# count it (and penalize a "Buy Limit" vs "Sell Limit" match that's
+# otherwise identical in what actually matters here: did you chase
+# price, wait for a pullback, or place a stop order beyond it). Bucket
+# down to Market / Limit / Stop before comparing.
+def _order_type_category(value: Any) -> str | None:
+    if not value:
+        return None
+    v = str(value).lower()
+    if "market" in v:
+        return "Market"
+    if "limit" in v:
+        return "Limit"
+    if "stop" in v:
+        return "Stop"
+    return None
+
+
+def _order_type_similarity(a: Any, b: Any) -> float:
+    return _cat_equal(_order_type_category(a), _order_type_category(b))
 
 
 def normalize_similarity_weights(weights: dict[str, float] | None = None) -> dict[str, float]:
@@ -193,6 +256,8 @@ def _feature_similarity(feature: str, candidate: dict, entry: dict, candidate_ta
         return _bool_presence("CHOCH", candidate_tags, entry_tags)
     if feature == "liquiditySweep":
         return _bool_presence("Liquidity Sweep", candidate_tags, entry_tags)
+    if feature == "fvg":
+        return _bool_presence("FVG", candidate_tags, entry_tags)
     if feature == "news":
         return _news_similarity(candidate.get("news"), entry.get("news"))
     if feature == "rr":
@@ -211,6 +276,8 @@ def _feature_similarity(feature: str, candidate: dict, entry: dict, candidate_ta
         a = _target_distance_pct(candidate.get("entry"), candidate.get("tp"))
         b = _target_distance_pct(entry.get("entry"), entry.get("tp"))
         return _distance_pct_similarity(a, b)
+    if feature == "orderType":
+        return _order_type_similarity(candidate.get("orderType"), entry.get("orderType"))
     return 0.0
 
 
@@ -229,8 +296,8 @@ def _feature_present(feature: str, candidate: dict, candidate_tags: list[str]) -
         return bool(candidate.get("h4PoiType") or candidate.get("poi"))
     if feature == "premiumDiscount":
         return bool(candidate.get("premiumDiscount"))
-    if feature in ("bos", "choch", "liquiditySweep"):
-        tag = {"bos": "BOS", "choch": "CHOCH", "liquiditySweep": "Liquidity Sweep"}[feature]
+    if feature in ("bos", "choch", "liquiditySweep", "fvg"):
+        tag = {"bos": "BOS", "choch": "CHOCH", "liquiditySweep": "Liquidity Sweep", "fvg": "FVG"}[feature]
         return tag in candidate_tags
     if feature == "news":
         return candidate.get("news") in _NEWS_RANK
@@ -246,6 +313,8 @@ def _feature_present(feature: str, candidate: dict, candidate_tags: list[str]) -
         return _stop_distance_pct(candidate.get("entry"), candidate.get("sl")) is not None
     if feature == "targetDistancePct":
         return _target_distance_pct(candidate.get("entry"), candidate.get("tp")) is not None
+    if feature == "orderType":
+        return _order_type_category(candidate.get("orderType")) is not None
     return False
 
 

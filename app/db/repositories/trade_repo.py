@@ -23,6 +23,8 @@ _ASSIGNABLE_FIELDS = (
     "pair",
     "direction",
     "asset",
+    "timeframe",
+    "order_type",
     "entry",
     "exit_price",
     "sl",
@@ -47,6 +49,9 @@ _ASSIGNABLE_FIELDS = (
     "worked_tags",
     "failed_tags",
     "screenshots",
+    "entered_at",
+    "closed_at",
+    "vision_fingerprint",
 )
 
 

@@ -87,11 +87,32 @@ class TradeService:
             rule_recommendation=result["recommendation"],
         )
 
+    def _stamp_timestamps(self, patch: dict[str, Any], existing: Trade | None) -> None:
+        """Sprint 20 Phase 4 -- auto-timestamps ``entered_at`` (once, the
+        first time a trade is ever saved) and ``closed_at`` (once, the
+        moment ``exit_price`` is first set) so "time in trade" is
+        computable without the trader doing anything extra. Never
+        overwrites a value the caller already supplied -- the MT5
+        auto-journal EA sends its own precise open/close time, which is
+        always more accurate than "whenever this HTTP request happened
+        to arrive" and must win. Never backdates an already-closed
+        trade's closed_at either (e.g. re-saving its notes later)."""
+        now = datetime.now(timezone.utc)
+        if existing is None and not patch.get("entered_at"):
+            patch["entered_at"] = now
+
+        had_exit_already = existing is not None and existing.exit_price is not None
+        is_setting_exit_now = patch.get("exit_price") is not None
+        if is_setting_exit_now and not had_exit_already and not patch.get("closed_at"):
+            patch["closed_at"] = now
+
     async def create_trade(self, user_id: int, trade_in: dict[str, Any]) -> dict[str, Any]:
         """create_trade(user_id, trade_in) — upsert + synchronous
         re-analysis, all in one transaction (Section 9.1)."""
         trade_id = trade_in["id"]
         model_kwargs = {k: v for k, v in trade_in.items() if k != "id"}
+        existing = await self.trade_repo.get(user_id, trade_id)
+        self._stamp_timestamps(model_kwargs, existing)
         trade = await self.trade_repo.upsert(user_id, trade_id, model_kwargs)
         await self._analyze_and_persist(user_id, trade)
         await self._invalidate_caches(user_id)
@@ -137,6 +158,7 @@ class TradeService:
         existing = await self.trade_repo.get(user_id, trade_id)
         if existing is None:
             raise NotFoundError(f"Trade {trade_id} not found")
+        self._stamp_timestamps(patch, existing)
         trade = await self.trade_repo.upsert(user_id, trade_id, patch)
         await self._analyze_and_persist(user_id, trade)
         await self._invalidate_caches(user_id)
@@ -199,8 +221,10 @@ class TradeService:
                 failed.append({"id": "", "error": "Missing id"})
                 continue
             try:
-                existed = await self.trade_repo.get(user_id, trade_id) is not None
+                existing = await self.trade_repo.get(user_id, trade_id)
+                existed = existing is not None
                 model_kwargs = {k: v for k, v in item.items() if k != "id"}
+                self._stamp_timestamps(model_kwargs, existing)
                 trade = await self.trade_repo.upsert(user_id, trade_id, model_kwargs)
                 await self._analyze_and_persist(user_id, trade)
                 if existed:

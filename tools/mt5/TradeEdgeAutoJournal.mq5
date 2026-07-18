@@ -162,6 +162,28 @@ string YyyyMmDd(datetime t)
 }
 
 //+------------------------------------------------------------------+
+//| Sprint 20 Phase 4 -- full open/close TIMESTAMPS (not just the date)|
+//| so the website can compute real "time in trade", not just group by |
+//| calendar day. Formats as "YYYY-MM-DDTHH:MM:SSZ" (ISO 8601), which  |
+//| the backend parses directly into a timezone-aware datetime.        |
+//| NOTE: MT5's TimeCurrent()/deal times are your BROKER'S SERVER time,|
+//| not necessarily UTC -- same caveat that already applies to         |
+//| SessionFromHour() above. Tagging it "Z" (UTC) when it may actually |
+//| be offset by a few hours is the best this EA can do without you    |
+//| telling it your broker's UTC offset; it only matters for the       |
+//| absolute clock time shown elsewhere, NOT for the "time in trade"   |
+//| duration itself (entered/closed use the same clock, so the         |
+//| difference between them is correct regardless of offset).          |
+//+------------------------------------------------------------------+
+string IsoDateTime(datetime t)
+{
+   string s = TimeToString(t, TIME_DATE | TIME_SECONDS); // "2026.07.18 14:23:05"
+   StringReplace(s, ".", "-");
+   StringReplace(s, " ", "T");
+   return s + "Z";
+}
+
+//+------------------------------------------------------------------+
 //| Same session buckets as the website's own sessionFromHour() JS    |
 //| helper (used for its CSV/Excel import) -- kept identical so a     |
 //| trade auto-filled by this EA matches what manual import would've  |
@@ -253,6 +275,7 @@ string BuildOpenBody(long positionId, string symbol, int direction, double entry
    string body = "{";
    body += "\"id\":\"" + id + "\",";
    body += "\"date\":\"" + YyyyMmDd(openTime) + "\",";
+   body += "\"enteredAt\":\"" + IsoDateTime(openTime) + "\",";
    body += "\"pair\":\"" + symbol + "\",";
    body += "\"direction\":\"" + (direction > 0 ? "buy" : "sell") + "\",";
    body += "\"asset\":\"" + GuessAsset(symbol) + "\",";
@@ -293,6 +316,7 @@ void HandlePositionClose(ulong dealTicket, long positionId, string symbol)
                  + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
                  + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
    long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
+   datetime closeTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
 
    // The website's Exit Reason dropdown has specific, subjective manual-
    // close categories (Target Reached / Fear / New POI / Structure Break
@@ -330,6 +354,7 @@ void HandlePositionClose(ulong dealTicket, long positionId, string symbol)
    string body = "{";
    body += "\"id\":\"" + id + "\",";
    body += "\"exit\":" + DoubleToString(exitPrice, digits) + ",";
+   body += "\"closedAt\":\"" + IsoDateTime(closeTime) + "\",";
    body += "\"pnl\":" + DoubleToString(profit, 2);
    if(haveRr) body += ",\"rr\":" + DoubleToString(rr, 2);
    if(haveExitReason) body += ",\"exitReason\":\"" + exitReason + "\"";

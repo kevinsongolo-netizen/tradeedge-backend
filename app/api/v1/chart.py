@@ -90,6 +90,7 @@ async def full_analysis_image(
         extraction=SetupExtraction(**result["extraction"]),
         insight=SetupInsight(**result["insight"]),
         meta=result["meta"],
+        fingerprint=result.get("fingerprint"),
     )
 
 

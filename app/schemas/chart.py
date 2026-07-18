@@ -288,6 +288,19 @@ class SimilarTradeSummary(CamelModel):
     reasons: list[str] = Field(default_factory=list)  # e.g. ["Same direction (SELL)", "Similar stop size"]
 
 
+class CharacteristicGaps(CamelModel):
+    """Sprint 20 Phase 4 -- "what do my winners have that this
+    doesn't / what do my losers have that this also has?" See
+    ``app/engines/characteristic_gap_engine.py``. Purely descriptive,
+    never a recommendation."""
+
+    has_enough_data: bool
+    winning_trade_count: int
+    losing_trade_count: int
+    winner_gaps: list[str] = Field(default_factory=list)
+    loser_echoes: list[str] = Field(default_factory=list)
+
+
 class SetupInsight(CamelModel):
     """The "have I seen this before, and how did it go?" result --
     never a verdict. See ``app/engines/setup_insight_engine.py``."""
@@ -304,6 +317,13 @@ class SetupInsight(CamelModel):
     top_similar: list[SimilarTradeSummary] = Field(default_factory=list)
     narrative: list[str] = Field(default_factory=list)
     risk_notes: list[str] = Field(default_factory=list)
+    # Sprint 20 Phase 4 -- true whenever winRate/averageRr/averageProfit
+    # were withheld (set to None) because the similar-trade sample was
+    # too thin (< 3) to mean anything as a percentage. The narrative
+    # already says so in plain language; this lets the UI also swap its
+    # normal win-rate display for an explicit "low confidence" note.
+    low_confidence: bool = False
+    characteristic_gaps: CharacteristicGaps | None = None
 
 
 class ChartSetupInsightResponse(CamelModel):
@@ -313,3 +333,12 @@ class ChartSetupInsightResponse(CamelModel):
     extraction: SetupExtraction
     insight: SetupInsight
     meta: ImageAnalyzeMeta | None = None
+    # Sprint 20 Phase 4 -- the complete raw vision read (every field the
+    # AI detected on the screenshot, not just the curated ``extraction``
+    # subset), returned verbatim so the frontend can carry it straight
+    # into ``POST /trades``'s ``visionFingerprint`` when the trade is
+    # saved. Untyped on purpose -- it mirrors whatever the vision
+    # provider returned, which is deliberately allowed to grow (e.g.
+    # "any other SMC information Claude can detect") without a schema
+    # change here every time.
+    fingerprint: dict | None = None

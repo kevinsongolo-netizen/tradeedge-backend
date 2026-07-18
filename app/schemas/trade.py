@@ -41,6 +41,11 @@ class TradeBase(CamelModel):
     pair: str | None = None
     direction: str | None = None
     asset: str | None = None
+    # Sprint 20 Phase 4 -- read by the vision provider today (see
+    # SetupExtraction.timeframe/.order_type) but not persisted to the
+    # trade until now.
+    timeframe: str | None = None
+    order_type: str | None = None
     entry: float | None = None
     exit: float | None = Field(default=None, alias="exit")
     sl: float | None = None
@@ -65,6 +70,17 @@ class TradeBase(CamelModel):
     worked_tags: list[str] = Field(default_factory=list)
     failed_tags: list[str] = Field(default_factory=list)
     screenshots: list[TradeScreenshot] = Field(default_factory=list)
+    # Sprint 20 Phase 4 -- real timestamps (not just ``date``, which has
+    # no time-of-day) so "time in trade" is computable; auto-stamped by
+    # TradeService if omitted (see its _stamp_timestamps docstring), but
+    # can be supplied directly by a client that already has a precise
+    # time (e.g. the MT5 auto-journal EA).
+    entered_at: datetime | None = None
+    closed_at: datetime | None = None
+    # The complete raw vision-provider read, stored verbatim so nothing
+    # detected off the screenshot is silently discarded just because
+    # today's schema has no dedicated column for it yet.
+    vision_fingerprint: dict | None = None
 
     def to_model_kwargs(self) -> dict:
         """Maps this schema's fields onto ``Trade`` ORM attribute names
@@ -150,6 +166,10 @@ class TradeOut(TradeBase):
     execution_score: int | None = None
     overall_score: int | None = None
     rule_recommendation: str | None = None
+    # Sprint 20 Phase 4 -- computed from entered_at/closed_at, never
+    # stored directly; None whenever either is missing (an older trade
+    # logged before this field existed, or a still-open trade).
+    time_in_trade_minutes: float | None = None
     created_at: datetime
     updated_at: datetime
 
