@@ -45,6 +45,16 @@ DEFAULT_SIMILARITY_WEIGHTS: dict[str, float] = {
     "confidence": 3,
     "lots": 1,
     "entryProximity": 1,
+    # Sprint 20 Phase 2 -- stop/target placement as their OWN dimensions,
+    # not just folded into the combined R:R ratio. Two setups can share
+    # the exact same R:R (say 2.0) with wildly different risk sizing --
+    # a 0.1%-of-price stop feels and behaves nothing like a 5%-of-price
+    # stop, even at identical R:R -- so comparing them separately lets
+    # "similar setups" also mean "similarly-sized stop/target", which is
+    # what a trader actually means by "how did I place my stop/TP here
+    # before."
+    "stopDistancePct": 5,
+    "targetDistancePct": 5,
 }
 
 _NEWS_RANK = {"None": 0, "Low": 1, "Medium": 2, "High": 3}
@@ -121,6 +131,35 @@ def _lots_similarity(a: Any, b: Any) -> float:
     return _gaussian(math.log10(av), math.log10(bv), 0.5)
 
 
+def _stop_distance_pct(entry: Any, sl: Any) -> float | None:
+    """Stop-loss distance as a percentage of entry price -- how "tight"
+    or "wide" the stop is, independent of R:R (two trades can share the
+    same R:R with very differently sized stops)."""
+    e, s = _num(entry), _num(sl)
+    if e is None or s is None or e == 0:
+        return None
+    return abs(e - s) / abs(e) * 100
+
+
+def _target_distance_pct(entry: Any, tp: Any) -> float | None:
+    """Take-profit distance as a percentage of entry price -- how
+    ambitious the target is, independent of R:R."""
+    e, t = _num(entry), _num(tp)
+    if e is None or t is None or e == 0:
+        return None
+    return abs(t - e) / abs(e) * 100
+
+
+def _distance_pct_similarity(a_pct: float | None, b_pct: float | None) -> float:
+    if a_pct is None or b_pct is None or a_pct <= 0 or b_pct <= 0:
+        return 0.0
+    # Log space, like _lots_similarity -- these percentages can span
+    # orders of magnitude (a tight 0.05% forex stop vs. a wide 3% crypto
+    # stop), so comparing them on a linear scale would make everything
+    # except near-identical values look maximally dissimilar.
+    return _gaussian(math.log10(a_pct), math.log10(b_pct), 0.5)
+
+
 def _entry_proximity(candidate: dict, entry: dict) -> float:
     if not _pair_equal(candidate.get("pair"), entry.get("pair")):
         return 0.0
@@ -164,6 +203,14 @@ def _feature_similarity(feature: str, candidate: dict, entry: dict, candidate_ta
         return _lots_similarity(candidate.get("lots"), entry.get("lots"))
     if feature == "entryProximity":
         return _entry_proximity(candidate, entry)
+    if feature == "stopDistancePct":
+        a = _stop_distance_pct(candidate.get("entry"), candidate.get("sl"))
+        b = _stop_distance_pct(entry.get("entry"), entry.get("sl"))
+        return _distance_pct_similarity(a, b)
+    if feature == "targetDistancePct":
+        a = _target_distance_pct(candidate.get("entry"), candidate.get("tp"))
+        b = _target_distance_pct(entry.get("entry"), entry.get("tp"))
+        return _distance_pct_similarity(a, b)
     return 0.0
 
 
@@ -195,6 +242,10 @@ def _feature_present(feature: str, candidate: dict, candidate_tags: list[str]) -
         return _num(candidate.get("lots")) is not None
     if feature == "entryProximity":
         return bool(candidate.get("pair")) and _num(candidate.get("entry")) is not None
+    if feature == "stopDistancePct":
+        return _stop_distance_pct(candidate.get("entry"), candidate.get("sl")) is not None
+    if feature == "targetDistancePct":
+        return _target_distance_pct(candidate.get("entry"), candidate.get("tp")) is not None
     return False
 
 

@@ -83,6 +83,144 @@ def _average(values: list[float]) -> float | None:
     return sum(nums) / len(nums) if nums else None
 
 
+# Human-readable label for each similarity feature, used to explain WHY a
+# past trade is considered similar rather than just showing a bare percent.
+# Only features whose actual per-match similarity score cleared a
+# reasonable bar are shown (see _contribution_reasons) -- a feature can be
+# one of the top-3 CONTRIBUTIONS (weight * similarity) purely because it's
+# heavily weighted, even with a mediocre similarity score, and that's not
+# a fair "why" to show the trader.
+_REASON_MIN_SIMILARITY = 0.6
+
+
+def _contribution_reasons(contributions: list[dict], candidate: dict, entry: dict) -> list[str]:
+    reasons: list[str] = []
+    for c in contributions:
+        feature = c.get("feature")
+        sim = c.get("similarity") or 0
+        if sim < _REASON_MIN_SIMILARITY:
+            continue
+        if feature == "pair":
+            reasons.append(f"Same pair ({entry.get('pair')})")
+        elif feature == "direction":
+            reasons.append(f"Same direction ({(entry.get('direction') or '').upper()})")
+        elif feature == "asset":
+            reasons.append(f"Same asset class ({entry.get('asset')})")
+        elif feature == "session":
+            reasons.append(f"Same session ({entry.get('session')})")
+        elif feature == "h4Trend":
+            reasons.append(f"Same trend ({entry.get('h4Trend')})")
+        elif feature == "h4PoiType":
+            poi = entry.get("h4PoiType") or entry.get("poi")
+            reasons.append(f"Same point of interest ({poi})")
+        elif feature == "premiumDiscount":
+            reasons.append(f"Same zone ({entry.get('premiumDiscount')})")
+        elif feature == "bos":
+            reasons.append("Both had a BOS")
+        elif feature == "choch":
+            reasons.append("Both had a CHoCH")
+        elif feature == "liquiditySweep":
+            reasons.append("Both had a liquidity sweep")
+        elif feature == "rr":
+            reasons.append("Similar R:R")
+        elif feature == "stopDistancePct":
+            reasons.append("Similar stop size")
+        elif feature == "targetDistancePct":
+            reasons.append("Similar take-profit distance")
+        elif feature == "entryProximity":
+            reasons.append("Very close entry price")
+        elif feature == "lots":
+            reasons.append("Similar position size")
+        elif feature == "confidence":
+            reasons.append("Similar read confidence")
+        elif feature == "news":
+            reasons.append("Similar news risk")
+    return reasons
+
+
+def _r_multiple_display(rr: float | None, outcome: str | None) -> str | None:
+    """Signed R-multiple for display, e.g. "+2.5R" / "-1.0R" -- rr is
+    stored as a positive ratio, sign comes from the trade's outcome."""
+    if rr is None:
+        return None
+    sign = "-" if (outcome or "").lower() == "loss" else "+"
+    return f"{sign}{abs(rr):.2f}R"
+
+
+def _detected_summary(raw_extraction: dict[str, Any] | None) -> str | None:
+    """Restates exactly what the vision model read off THIS screenshot
+    -- the trader's own order type, POI label, and structure event, in
+    those exact words -- as the very first line of the insight. Sprint
+    20 Phase 2 #6: the trader should be able to confirm the read is
+    correct ("yes, that's my Buy Limit on a Bullish Order Block") before
+    reading anything about how it compares to history, instead of a
+    generic "setup detected" line that could describe any trade.
+
+    Takes the raw vision extraction (``candidate_from_vision_extraction``'s
+    input, before it's narrowed down to similarity-engine fields), since
+    that's the only place ``orderType``/``structure``/``fvgStatus``/the
+    verbatim ``latestEvent`` text survive -- ``candidate_from_vision_
+    extraction`` drops them down to a plain BOS/CHOCH/sweep tag list for
+    the similarity engine's own purposes."""
+    if not raw_extraction:
+        return None
+
+    structure_bits: list[str] = []
+    trend = raw_extraction.get("trend")
+    if trend:
+        structure_bits.append(f"{trend} trend")
+    poi = raw_extraction.get("poiType")
+    if poi:
+        structure_bits.append(poi)
+    latest_event = raw_extraction.get("latestEvent")
+    if latest_event:
+        structure_bits.append(latest_event)
+    fvg = raw_extraction.get("fvgStatus")
+    if fvg and fvg.strip().lower() not in ("none", "n/a", "no fvg", ""):
+        structure_bits.append(fvg)
+    liquidity = raw_extraction.get("liquidity")
+    if liquidity and "sweep" in liquidity.lower():
+        structure_bits.append(liquidity)
+    premium_discount = raw_extraction.get("premiumDiscount")
+    if premium_discount:
+        structure_bits.append(f"{premium_discount} zone")
+
+    order_bits: list[str] = []
+    pair = raw_extraction.get("pair")
+    if pair:
+        order_bits.append(pair)
+    order_type = raw_extraction.get("orderType")
+    direction = (raw_extraction.get("orderDirection") or "").upper()
+    if order_type:
+        order_bits.append(order_type)
+    elif direction and direction != "NONE":
+        order_bits.append(direction)
+
+    price_bits: list[str] = []
+    entry, sl, tp = _num(raw_extraction.get("entry")), _num(raw_extraction.get("stopLoss")), _num(raw_extraction.get("takeProfit"))
+    rr = _num(raw_extraction.get("riskReward"))
+    if entry is not None:
+        price_bits.append(f"Entry {_fmt_price(entry)}")
+    if sl is not None:
+        price_bits.append(f"SL {_fmt_price(sl)}")
+    if tp is not None:
+        price_bits.append(f"TP {_fmt_price(tp)}")
+    if rr is not None:
+        price_bits.append(f"R:R {rr:.2f}")
+
+    if not structure_bits and not order_bits and not price_bits:
+        return None
+
+    pieces: list[str] = []
+    if structure_bits:
+        pieces.append("Detected: " + ", ".join(structure_bits))
+    if order_bits:
+        pieces.append(" ".join(order_bits))
+    if price_bits:
+        pieces.append(", ".join(price_bits))
+    return " -- ".join(pieces) + "."
+
+
 def build_setup_insight(
     candidate: dict[str, Any],
     history: list[dict[str, Any]] | None,
@@ -90,17 +228,31 @@ def build_setup_insight(
     min_total_history: int = MIN_TOTAL_HISTORY_FOR_INSIGHT,
     min_similarity: float = DEFAULT_MIN_SIMILARITY,
     limit: int = DEFAULT_LIMIT,
+    raw_extraction: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Builds the "have I seen this before, and how did it go?" insight
     for a freshly-read setup. Always returns data -- there is no
     pass/fail gate anywhere in this function's output. Degrades
     honestly (clear "not enough history yet" narrative, not a fake
-    result) when the trader hasn't logged enough trades yet."""
+    result) when the trader hasn't logged enough trades yet.
+
+    ``raw_extraction``: the vision model's raw screenshot read (before
+    ``candidate_from_vision_extraction`` narrows it down), used only to
+    prepend a "Detected: ..." line restating what was read, in the
+    trader's own terms, ahead of any history comparison (Sprint 20
+    Phase 2 #6). Optional -- omitted entirely when not supplied (e.g.
+    a candidate built some other way than from a screenshot read)."""
     history = history or []
     total_history_count = len(history)
     pair_label = candidate.get("pair") or "this pair"
+    detected = _detected_summary(raw_extraction)
 
     if total_history_count < min_total_history:
+        narrative = ([detected] if detected else []) + [
+            f"Not enough logged trades yet to compare this setup against your history "
+            f"(you have {total_history_count}, need at least {min_total_history}). "
+            "Log this trade's outcome when it closes so future setups get real feedback."
+        ]
         return {
             "hasEnoughHistory": False,
             "totalHistoryCount": total_history_count,
@@ -112,11 +264,7 @@ def build_setup_insight(
             "averageRR": None,
             "averageProfit": None,
             "topSimilar": [],
-            "narrative": [
-                f"Not enough logged trades yet to compare this setup against your history "
-                f"(you have {total_history_count}, need at least {min_total_history}). "
-                "Log this trade's outcome when it closes so future setups get real feedback."
-            ],
+            "narrative": narrative,
             "riskNotes": [],
         }
 
@@ -125,6 +273,10 @@ def build_setup_insight(
     sample_size = len(similar)
 
     if sample_size == 0:
+        narrative = ([detected] if detected else []) + [
+            f"This doesn't closely resemble any of your {total_history_count} past trades on {pair_label} "
+            "yet -- no similar setup found. That's not good or bad by itself, just new territory."
+        ]
         return {
             "hasEnoughHistory": True,
             "totalHistoryCount": total_history_count,
@@ -136,10 +288,7 @@ def build_setup_insight(
             "averageRR": None,
             "averageProfit": None,
             "topSimilar": [],
-            "narrative": [
-                f"This doesn't closely resemble any of your {total_history_count} past trades on {pair_label} "
-                "yet -- no similar setup found. That's not good or bad by itself, just new territory."
-            ],
+            "narrative": narrative,
             "riskNotes": [],
         }
 
@@ -147,7 +296,7 @@ def build_setup_insight(
     wins, losses, breakeven = result["wins"], result["losses"], result["breakeven"]
     win_rate = result["winRate"]
 
-    narrative: list[str] = []
+    narrative: list[str] = [detected] if detected else []
     win_rate_txt = f"{win_rate:.0f}%" if win_rate is not None else "n/a"
     narrative.append(
         f"This setup is {avg_similarity:.0f}% similar on average to {sample_size} of your past "
@@ -208,6 +357,8 @@ def build_setup_insight(
             "similarity": s.get("similarity"),
             "pnl": _num(s.get("pnl")),
             "rr": _num(s.get("rr")),
+            "rMultiple": _r_multiple_display(_num(s.get("rr")), s.get("outcome")),
+            "reasons": _contribution_reasons(s.get("contributions") or [], candidate, s),
         }
         for s in similar[:TOP_SIMILAR_DISPLAY_COUNT]
     ]

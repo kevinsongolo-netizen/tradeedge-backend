@@ -97,3 +97,47 @@ def test_entry_proximity_only_applies_to_same_pair():
     r1 = search_similar(candidate, [same_pair_close], min_similarity=0)
     r2 = search_similar(candidate, [diff_pair_close], min_similarity=0)
     assert r1["similar"][0]["similarity"] >= r2["similar"][0]["similarity"]
+
+
+# --- Sprint 20 Phase 2 -- stop/target placement as their own dimensions ----
+
+
+def test_same_rr_but_very_different_stop_size_scores_lower_than_matching_stop_size():
+    """Two trades can share the exact same R:R with wildly different risk
+    sizing (a 0.1%-of-price stop vs. a 5%-of-price stop) -- similarity
+    should treat those as meaningfully different setups, not identical
+    just because the ratio matches."""
+    candidate = {
+        "id": "cand", "pair": "EURUSD", "direction": "buy",
+        "entry": 1.1000, "sl": 1.0989, "tp": 1.1033,  # tight stop, ~0.1% risk, R:R ~3
+    }
+    tight_match = {
+        "id": "tight", "pair": "EURUSD", "direction": "buy",
+        "entry": 1.2000, "sl": 1.1988, "tp": 1.2036,  # same ~0.1% risk, same R:R
+        "pnl": 10,
+    }
+    wide_mismatch = {
+        "id": "wide", "pair": "EURUSD", "direction": "buy",
+        "entry": 1.1000, "sl": 1.0450, "tp": 1.1165,  # ~5% risk, same R:R ~3
+        "pnl": -10,
+    }
+    result = search_similar(candidate, [tight_match, wide_mismatch], min_similarity=0, limit=10)
+    by_id = {m["id"]: m["similarity"] for m in result["similar"]}
+    assert by_id["tight"] > by_id["wide"]
+
+
+def test_stop_distance_pct_present_only_with_entry_and_sl():
+    candidate_missing_sl = {"id": "a", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "rr": 2.0}
+    entry = {"id": "b", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "sl": 1.09, "tp": 1.12, "rr": 2.0}
+    # Should not blow up even though the candidate has no SL to compare.
+    result = search_similar(candidate_missing_sl, [entry], min_similarity=0)
+    assert len(result["similar"]) == 1
+
+
+def test_target_distance_pct_contributes_to_similarity():
+    candidate = {"id": "cand", "pair": "GOLDmicro", "direction": "sell", "entry": 4000, "sl": 4010, "tp": 3980}
+    close_target = {"id": "close", "pair": "GOLDmicro", "direction": "sell", "entry": 4000, "sl": 4010, "tp": 3979, "pnl": 5}
+    far_target = {"id": "far", "pair": "GOLDmicro", "direction": "sell", "entry": 4000, "sl": 4010, "tp": 3800, "pnl": -5}
+    result = search_similar(candidate, [close_target, far_target], min_similarity=0)
+    by_id = {m["id"]: m["similarity"] for m in result["similar"]}
+    assert by_id["close"] > by_id["far"]

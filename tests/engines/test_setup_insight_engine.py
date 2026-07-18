@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.engines.setup_insight_engine import (
+    _detected_summary,
     build_setup_insight,
     candidate_from_vision_extraction,
 )
@@ -115,3 +116,125 @@ def test_risk_note_flags_tight_rr_versus_winning_average():
     candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell", "rr": 1.1}
     insight = build_setup_insight(candidate, history_local, min_similarity=0)
     assert any("tighter than your average R:R" in note for note in insight["riskNotes"])
+
+
+# --- Sprint 20 Phase 2 -- visual trade-memory cards: reasons + R-multiple --
+
+
+def test_top_similar_includes_reasons_for_a_strong_match(history):
+    """Building a candidate that's near-identical to a real history entry
+    should surface WHY it's similar (same pair, same direction, etc.),
+    not just a bare percentage."""
+    reference = history[0]
+    candidate = dict(reference)
+    candidate["id"] = "brand-new-candidate"
+    insight = build_setup_insight(candidate, history)
+    top = insight["topSimilar"][0]
+    assert isinstance(top["reasons"], list)
+    assert len(top["reasons"]) >= 1
+    # The identical-trade match should at minimum explain the pair match.
+    assert any("pair" in r.lower() or "direction" in r.lower() for r in top["reasons"])
+
+
+def test_top_similar_r_multiple_is_signed_by_outcome(history):
+    reference = history[0]
+    candidate = dict(reference)
+    candidate["id"] = "brand-new-candidate"
+    insight = build_setup_insight(candidate, history)
+    top = insight["topSimilar"][0]
+    if top["rr"] is not None:
+        assert top["rMultiple"] is not None
+        assert top["rMultiple"].endswith("R")
+        if top["outcome"] == "Loss":
+            assert top["rMultiple"].startswith("-")
+        elif top["outcome"] == "Win":
+            assert top["rMultiple"].startswith("+")
+
+
+def test_top_similar_reasons_empty_list_not_missing_when_weak_match():
+    """Even a match with no strong individual-feature reasons should
+    still have a (possibly empty) reasons list, never a missing key."""
+    history = [
+        {"id": "h1", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "sl": 1.09,
+         "tp": 1.12, "rr": 2.0, "pnl": 10, "date": "2026-01-01"},
+        {"id": "h2", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "sl": 1.09,
+         "tp": 1.12, "rr": 2.0, "pnl": 10, "date": "2026-01-02"},
+        {"id": "h3", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "sl": 1.09,
+         "tp": 1.12, "rr": 2.0, "pnl": -5, "date": "2026-01-03"},
+        {"id": "h4", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "sl": 1.09,
+         "tp": 1.12, "rr": 2.0, "pnl": 10, "date": "2026-01-04"},
+        {"id": "h5", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "sl": 1.09,
+         "tp": 1.12, "rr": 2.0, "pnl": -5, "date": "2026-01-05"},
+    ]
+    candidate = {"id": "cand", "pair": "EURUSD", "direction": "buy", "entry": 1.1, "sl": 1.09, "tp": 1.12}
+    insight = build_setup_insight(candidate, history, min_similarity=0)
+    for top in insight["topSimilar"]:
+        assert "reasons" in top
+        assert isinstance(top["reasons"], list)
+
+
+# --- Sprint 20 Phase 2 #6 -- "Detected: ..." line restates the exact
+# read, in the trader's own terms, before any history comparison ------
+
+
+def test_detected_summary_restates_exact_read_not_generic_bot_speak():
+    raw = {
+        "pair": "GOLDmicro",
+        "orderDirection": "BUY",
+        "orderType": "Buy Limit",
+        "entry": 4001.14,
+        "stopLoss": 3982.77,
+        "takeProfit": 4030.0,
+        "riskReward": 1.81,
+        "trend": "Bullish",
+        "poiType": "Bullish Order Block",
+        "premiumDiscount": "Discount",
+        "latestEvent": "Bullish CHOCH detected",
+        "liquidity": "Liquidity sweep below equal lows",
+    }
+    summary = _detected_summary(raw)
+    assert summary is not None
+    assert summary.startswith("Detected:")
+    assert "Bullish Order Block" in summary
+    assert "Bullish CHOCH detected" in summary
+    assert "Discount zone" in summary
+    assert "Liquidity sweep below equal lows" in summary
+    assert "GOLDmicro" in summary
+    assert "Buy Limit" in summary
+    assert "Entry 4001.14" in summary
+    assert "R:R 1.81" in summary
+
+
+def test_detected_summary_is_none_when_nothing_to_show():
+    assert _detected_summary(None) is None
+    assert _detected_summary({}) is None
+
+
+def test_detected_summary_prepended_to_narrative_when_history_thin():
+    candidate = {"pair": "GOLDmicro", "direction": "sell", "rr": 1.8}
+    thin_history = [{"id": "1", "pair": "GOLDmicro", "direction": "sell", "pnl": 10}]
+    raw = {"pair": "GOLDmicro", "orderType": "Sell Limit", "poiType": "Bearish Order Block"}
+    insight = build_setup_insight(candidate, thin_history, raw_extraction=raw)
+    assert insight["narrative"][0].startswith("Detected:")
+    assert "Not enough logged trades" in insight["narrative"][1]
+
+
+def test_detected_summary_prepended_to_narrative_on_a_real_match(history):
+    reference = history[0]
+    candidate = dict(reference)
+    candidate["id"] = "brand-new-candidate"
+    raw = {"pair": candidate["pair"], "orderType": "Buy Limit", "poiType": "Bullish FVG", "trend": "Bullish"}
+    insight = build_setup_insight(candidate, history, raw_extraction=raw)
+    assert insight["narrative"][0].startswith("Detected:")
+    assert "similar" in insight["narrative"][1]
+
+
+def test_no_raw_extraction_supplied_narrative_unchanged(history):
+    """Backwards compatible -- omitting raw_extraction (e.g. a candidate
+    not built from a screenshot) skips the detected line entirely
+    rather than erroring or inserting a blank line."""
+    reference = history[0]
+    candidate = dict(reference)
+    candidate["id"] = "brand-new-candidate"
+    insight = build_setup_insight(candidate, history)
+    assert "similar" in insight["narrative"][0]

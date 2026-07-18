@@ -51,6 +51,16 @@ int OnInit()
    // that was opened before this EA was (re)attached or recompiled --
    // otherwise the in-memory arrays below start empty on every restart
    // and any position opened in a previous run closes with no R:R.
+   //
+   // Sprint 20 fix -- this used to ONLY track locally. OnTradeTransaction
+   // fires for NEW deals from this point forward only, so a position that
+   // was already open before the EA (re)started would be tracked here for
+   // R:R math but would NEVER actually reach the website's Journal -- its
+   // original "open" event already happened before this run began, and
+   // nothing retroactively reports it. Now each currently-open position is
+   // also (re)posted to the backend below; that's always safe even if it
+   // was already reported in a previous run, since /api/v1/trades upserts
+   // by id (same "mt5-<account>-<positionId>" id every time).
    int rebuilt = 0;
    for(int i = 0; i < PositionsTotal(); i++)
    {
@@ -59,16 +69,23 @@ int OnInit()
       if(!PositionSelectByTicket(ticket)) continue;
 
       long posId = (long)PositionGetInteger(POSITION_IDENTIFIER);
+      string symbol = PositionGetString(POSITION_SYMBOL);
       double entry = PositionGetDouble(POSITION_PRICE_OPEN);
       double sl = PositionGetDouble(POSITION_SL);
+      double tp = PositionGetDouble(POSITION_TP);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
       int direction = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 1 : -1;
 
       TrackPositionOpen(posId, entry, sl, direction);
+
+      string body = BuildOpenBody(posId, symbol, direction, entry, sl, tp, volume, openTime);
+      PostTrade(body, "restored open " + symbol + " " + (direction > 0 ? "buy" : "sell"));
       rebuilt++;
    }
 
    Print("TradeEdge Auto-Journal: watching this account for trade open/close events. ",
-         "Restored R:R tracking for ", rebuilt, " currently-open position(s). ",
+         "Restored + reported ", rebuilt, " currently-open position(s) to the website. ",
          "Run only ONE copy of this EA across all your charts.");
    return(INIT_SUCCEEDED);
 }
@@ -211,23 +228,13 @@ void PostTrade(string bodyJson, string label)
 }
 
 //+------------------------------------------------------------------+
-void HandlePositionOpen(ulong dealTicket, long positionId, string symbol)
+// Shared by HandlePositionOpen (a brand-new deal, from OnTradeTransaction)
+// and OnInit's rebuild loop (a position that was already open when the EA
+// started) -- both know entry/SL/TP/direction/volume/openTime/symbol
+// already, just from different sources (a history deal vs. the live
+// position), so there's no need for two separate JSON builders.
+string BuildOpenBody(long positionId, string symbol, int direction, double entry, double sl, double tp, double volume, datetime openTime)
 {
-   long dealType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
-   int direction = (dealType == DEAL_TYPE_BUY) ? 1 : -1;
-   double entry = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
-   double volume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
-   datetime openTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
-
-   double sl = 0, tp = 0;
-   if(PositionSelectByTicket(positionId))
-   {
-      sl = PositionGetDouble(POSITION_SL);
-      tp = PositionGetDouble(POSITION_TP);
-   }
-
-   TrackPositionOpen(positionId, entry, sl, direction);
-
    long account = AccountInfoInteger(ACCOUNT_LOGIN);
    string id = "mt5-" + IntegerToString(account) + "-" + IntegerToString(positionId);
 
@@ -255,7 +262,26 @@ void HandlePositionOpen(ulong dealTicket, long positionId, string symbol)
    if(tp > 0) body += "\"tp\":" + DoubleToString(tp, digits) + ",";
    body += "\"lots\":" + DoubleToString(volume, 2);
    body += "}";
+   return body;
+}
 
+void HandlePositionOpen(ulong dealTicket, long positionId, string symbol)
+{
+   long dealType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+   int direction = (dealType == DEAL_TYPE_BUY) ? 1 : -1;
+   double entry = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+   double volume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+   datetime openTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+
+   double sl = 0, tp = 0;
+   if(PositionSelectByTicket(positionId))
+   {
+      sl = PositionGetDouble(POSITION_SL);
+      tp = PositionGetDouble(POSITION_TP);
+   }
+
+   TrackPositionOpen(positionId, entry, sl, direction);
+   string body = BuildOpenBody(positionId, symbol, direction, entry, sl, tp, volume, openTime);
    PostTrade(body, "opened " + symbol + " " + (direction > 0 ? "buy" : "sell"));
 }
 

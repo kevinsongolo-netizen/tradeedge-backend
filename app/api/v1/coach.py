@@ -53,13 +53,20 @@ async def coach_deep_dive(
     response_model=TradeReviewResult,
     summary="Sprint 11 — AI review-after-close for a single closed trade",
 )
-async def review_trade(body: TradeReviewRequest) -> TradeReviewResult:
-    """Stateless — takes the whole trade in the request body (same
-    fields the journal already collects), so it works whether or not
-    the trade has been synced to the backend yet. Never just labels a
-    trade win/loss: explains what worked, what went wrong, and the one
-    lesson worth remembering, from the rules-followed/tags/exit-reason/
-    R:R fields already captured when the trade was logged."""
-    service = TradeReviewService()
-    result = service.review(body.to_candidate_dict())
+async def review_trade(
+    body: TradeReviewRequest,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> TradeReviewResult:
+    """Takes the whole trade in the request body (same fields the
+    journal already collects), so it works whether or not the trade
+    has been synced to the backend yet. Never just labels a trade win/
+    loss: explains what worked, what went wrong, and the one lesson
+    worth remembering, from the rules-followed/tags/exit-reason/R:R
+    fields already captured when the trade was logged -- and, since
+    Sprint 20 Phase 2 #4, also compares this trade's stop/target sizing
+    and outcome against the trader's own similar past trades (loaded
+    from the DB for this user), never a fixed rule."""
+    service = TradeReviewService(session)
+    result = await service.review(user_id, body.to_candidate_dict())
     return TradeReviewResult(**result)

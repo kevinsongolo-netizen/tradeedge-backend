@@ -267,6 +267,8 @@ class SimilarTradeSummary(CamelModel):
     similarity: float | None = None
     pnl: float | None = None
     rr: float | None = None
+    r_multiple: str | None = None  # signed display string, e.g. "+2.5R" / "-1.0R"
+    reasons: list[str] = Field(default_factory=list)  # e.g. ["Same direction (SELL)", "Similar stop size"]
 
 
 class SetupInsight(CamelModel):

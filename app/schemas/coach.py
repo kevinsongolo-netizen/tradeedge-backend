@@ -75,3 +75,14 @@ class TradeReviewResult(CamelModel):
     what_went_wrong: list[str] = Field(default_factory=list)
     lesson: str
     followed_plan_note: str
+    # Sprint 20 Phase 2 #4 -- planned-vs-actual, compared against the
+    # trader's OWN similar closed trades (trade_lesson_engine.py), not
+    # a fixed rule. has_history=False means there weren't enough
+    # similar past trades yet to draw a comparison (said plainly in
+    # `lessons` rather than guessing).
+    has_enough_history: bool = True
+    similar_sample_size: int = 0
+    similar_wins: int = 0
+    similar_losses: int = 0
+    lessons: list[str] = Field(default_factory=list)
+    patterns: list[str] = Field(default_factory=list)

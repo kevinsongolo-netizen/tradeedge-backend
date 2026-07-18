@@ -95,7 +95,10 @@ def test_full_analysis_image_reports_thin_history_honestly(client):
     insight = resp.json()["insight"]
     assert insight["hasEnoughHistory"] is False
     assert insight["sampleSize"] == 0
-    assert "Not enough logged trades" in insight["narrative"][0]
+    # Sprint 20 Phase 2 #6 -- narrative[0] is now the "Detected: ..." line
+    # restating the (placeholder) vision read; the honest thin-history
+    # message is the next line.
+    assert any("Not enough logged trades" in line for line in insight["narrative"])
 
 
 def test_full_analysis_image_finds_similar_trades_once_history_exists(client):

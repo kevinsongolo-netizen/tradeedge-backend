@@ -86,6 +86,6 @@ class ChartService:
         candidate = candidate_from_vision_extraction(raw)
         trade_repo = TradeRepository(self.session)
         history = [t.to_engine_dict() for t in await trade_repo.list_all(user_id)]
-        insight = build_setup_insight(candidate, history)
+        insight = build_setup_insight(candidate, history, raw_extraction=raw)
 
         return {"extraction": extraction, "insight": insight, "meta": meta}
