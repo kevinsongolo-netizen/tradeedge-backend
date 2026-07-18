@@ -36,6 +36,13 @@ Two implementations ship today:
 Adding a third provider (OpenAI, a self-hosted model, ...) later means
 writing one more class here and one line in ``get_vision_provider`` —
 nothing else in the app needs to know.
+
+Sprint 20 Phase 6 -- added ``orderBlockFreshness``/``rejectionStrength``/
+``fvgSize`` to the schema: three characteristics the trader specifically
+asked the AI to learn from (fresh vs. mitigated zones, rejection candle
+strength, FVG size) that a vision read can estimate the same way it
+already estimates trend/structure/POI type, but weren't captured at
+all before this phase.
 """
 from __future__ import annotations
 
@@ -74,6 +81,13 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     "riskReward": "number or null — the R:R ratio if labeled directly, otherwise computed from entry/stopLoss/takeProfit if all three are present",
     "lots": "number or null — position size if shown",
     "poiType": "free text describing the point-of-interest label(s) touching the entry, e.g. 'Bearish Order Block' or 'Bullish FVG', or null",
+    # --- Sprint 20 Phase 6: three more characteristics traders judge a
+    # setup by, that a vision model can estimate from the same image but
+    # weren't previously captured at all -- see this module's Phase 6
+    # docstring note below.
+    "orderBlockFreshness": "Fresh | Mitigated | null -- has price already traded back into the order block/FVG the entry is based on before this entry (Mitigated), or is it untouched since it formed (Fresh)?",
+    "rejectionStrength": "Strong | Weak | None | null -- how strongly price rejected from the entry zone (a long wick/strong reversal candle = Strong, a weak indecisive candle = Weak, no clear rejection yet = None)",
+    "fvgSize": "Large | Medium | Small | null -- the fair value gap's size relative to recent candles, if one is visible",
 }
 
 
@@ -131,6 +145,9 @@ class PlaceholderVisionProvider(VisionProvider):
             "riskReward": None,
             "lots": None,
             "poiType": "PLACEHOLDER — Bullish Order Block (example data)",
+            "orderBlockFreshness": "Fresh",
+            "rejectionStrength": "Strong",
+            "fvgSize": "Medium",
             "numberConsistencyWarning": None,
             "provider": self.name,
             "isPlaceholder": True,
@@ -245,7 +262,12 @@ class AnthropicVisionProvider(VisionProvider):
             "order/position type and direction, and the exact Entry/Stop Loss/"
             "Take Profit/lot-size numbers from the order panel or chart labels. "
             "If R:R isn't labeled directly, compute it from Entry/Stop Loss/Take "
-            "Profit when all three are readable. "
+            "Profit when all three are readable. Also assess: whether the order "
+            "block/FVG the entry is based on has already been retested before "
+            "this entry (mitigated) or is still untouched (fresh), how strongly "
+            "price rejected from the entry zone (a long reversal wick vs. a weak "
+            "indecisive candle vs. no clear rejection), and the fair value gap's "
+            "size relative to recent candles if one is visible. "
             "Respond with ONLY a JSON object with exactly these keys: "
             f"{json.dumps(VISION_ANALYSIS_SCHEMA_HINT)}. "
             "If you cannot confidently determine a field from the image, use "

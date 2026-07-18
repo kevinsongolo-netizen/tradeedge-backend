@@ -95,3 +95,30 @@ def test_never_contains_a_verdict_field():
 
 def test_constant_matches_documented_honesty_bar():
     assert EDGE_MIN_SAMPLE == 3
+
+
+def test_worst_pattern_surfaced_from_bottom_of_ranking():
+    # MAX_PATTERNS=3, so a 4th qualifying group is needed for anything
+    # to actually be left over for the worst-patterns list.
+    strong = [_trade(f"s{i}", 50, pair="eurusd", direction="buy", timeframe="M15") for i in range(4)]
+    mid1 = [_trade(f"m1-{i}", 30, pair="gbpjpy", direction="buy", timeframe="M30") for i in range(4)]
+    mid2 = [_trade(f"m2-{i}", 20, pair="audusd", direction="buy", timeframe="H4") for i in range(4)]
+    weak = [_trade(f"w{i}", -20 if i < 3 else 5, pair="gbpusd", direction="buy", timeframe="H1") for i in range(4)]
+    result = build_edge_patterns(strong + mid1 + mid2 + weak)
+    assert result["patterns"][0]["pair"] == "eurusd"
+    assert result["worstPatterns"][0]["pair"] == "gbpusd"
+
+
+def test_worst_patterns_never_overlap_with_best_patterns():
+    strong = [_trade(f"s{i}", 50, pair="eurusd", direction="buy") for i in range(4)]
+    weak = [_trade(f"w{i}", -20 if i < 3 else 5, pair="gbpusd", direction="buy") for i in range(4)]
+    result = build_edge_patterns(strong + weak)
+    best_pairs = {p["pair"] for p in result["patterns"]}
+    worst_pairs = {p["pair"] for p in result["worstPatterns"]}
+    assert best_pairs.isdisjoint(worst_pairs)
+
+
+def test_worst_patterns_empty_when_only_one_qualifying_pattern():
+    history = [_trade(f"t{i}", 50) for i in range(4)]
+    result = build_edge_patterns(history)
+    assert result["worstPatterns"] == []

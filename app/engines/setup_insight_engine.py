@@ -73,6 +73,23 @@ def candidate_from_vision_extraction(extraction: dict[str, Any]) -> dict[str, An
     # "None"/"N/A"/"No FVG"/empty never counts as a real FVG present.
     if fvg_status.strip().lower() not in ("", "none", "n/a", "no fvg"):
         tags.append("FVG")
+    # Sprint 20 Phase 6 -- three more characteristics the trader asked
+    # the AI to specifically learn from: whether the order block/FVG is
+    # fresh or already mitigated, how strong the rejection candle was,
+    # and whether the FVG is large relative to recent candles. Read the
+    # same way BOS/CHoCH/sweep/FVG presence already are -- as tags on
+    # m15Confirmations, so every existing tag-based dimension (the
+    # similarity engine, the characteristic-gap engine, the "why
+    # X% similar" breakdown) picks them up with no extra plumbing.
+    ob_freshness = (extraction.get("orderBlockFreshness") or "").strip().lower()
+    if ob_freshness == "fresh":
+        tags.append("Fresh Order Block")
+    elif ob_freshness == "mitigated":
+        tags.append("Mitigated Order Block")
+    if (extraction.get("rejectionStrength") or "").strip().lower() == "strong":
+        tags.append("Strong Rejection")
+    if (extraction.get("fvgSize") or "").strip().lower() == "large":
+        tags.append("Large FVG")
 
     return {
         "pair": extraction.get("pair"),
@@ -162,6 +179,12 @@ def _contribution_reasons(contributions: list[dict], candidate: dict, entry: dic
             reasons.append("Both had a liquidity sweep")
         elif feature == "fvg":
             reasons.append("Both had an FVG")
+        elif feature == "freshOrderBlock":
+            reasons.append("Both had a fresh (untested) Order Block")
+        elif feature == "strongRejection":
+            reasons.append("Both had a strong rejection candle")
+        elif feature == "largeFvg":
+            reasons.append("Both had a large Fair Value Gap")
         elif feature == "rr":
             reasons.append("Similar R:R")
         elif feature == "stopDistancePct":
@@ -210,6 +233,9 @@ _BREAKDOWN_LABELS: dict[str, str] = {
     "news": "news risk",
     "orderType": "order type",
     "timeframe": "timeframe",
+    "freshOrderBlock": "fresh (untested) Order Block",
+    "strongRejection": "strong rejection candle",
+    "largeFvg": "large Fair Value Gap",
 }
 
 # Same bar as _REASON_MIN_SIMILARITY, named separately since it answers
@@ -227,7 +253,20 @@ def _similarity_breakdown(contributions: list[dict]) -> list[dict[str, Any]]:
     only the good matches (unlike _contribution_reasons) -- the whole
     point is to show the trader the mismatches too ("Different
     session", "Different trend"), which is what actually explains a
-    middling score like 51%."""
+    middling score like 51%.
+
+    Sprint 20 Phase 6 -- also exposes each dimension's actual point
+    contribution toward the overall percentage (e.g. "+20%"/"-10%"),
+    not just a bare matched/unmatched flag. ``similar_engine`` already
+    computes ``weight * similarity`` per dimension for the weighted
+    average itself -- this just reads the same ``weight`` back off each
+    contribution and expresses it as a share of the total weight
+    actually used for this comparison, signed by whether the dimension
+    matched. The signed points across every row sum to (approximately)
+    the overall similarity percentage, the same way the underlying
+    weighted average already works -- this is a transparent view into
+    that math, not a second scoring model."""
+    total_weight = sum(float(c.get("weight") or 0) for c in contributions) or 1.0
     rows: list[dict[str, Any]] = []
     for c in contributions:
         feature = c.get("feature")
@@ -235,11 +274,15 @@ def _similarity_breakdown(contributions: list[dict]) -> list[dict[str, Any]]:
         if not label:
             continue
         sim = c.get("similarity") or 0
+        matched = sim >= _BREAKDOWN_MATCH_THRESHOLD
+        weight = float(c.get("weight") or 0)
+        points = round(weight / total_weight * 100)
         rows.append({
             "feature": feature,
             "label": label,
-            "matched": sim >= _BREAKDOWN_MATCH_THRESHOLD,
+            "matched": matched,
             "similarity": round(sim, 2),
+            "points": points if matched else -points,
         })
     return rows
 

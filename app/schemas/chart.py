@@ -276,12 +276,19 @@ class SimilarityBreakdownRow(CamelModel):
     """Sprint 20 Phase 5 -- one row of "why is this X% similar":
     a single dimension (pair, direction, session, ...), whether it
     matched, and its raw 0-1 similarity score. See
-    ``app/engines/setup_insight_engine.py``'s ``_similarity_breakdown``."""
+    ``app/engines/setup_insight_engine.py``'s ``_similarity_breakdown``.
+
+    Sprint 20 Phase 6 -- ``points`` is this dimension's actual signed
+    contribution toward the overall similarity percentage (e.g. +20 for
+    a matched dimension worth 20% of the total weight, -10 for a
+    mismatched one worth 10%) -- lets the UI show "✓ Same Pair (+20%)"
+    instead of just a checkmark."""
 
     feature: str
     label: str
     matched: bool
     similarity: float
+    points: int = 0
 
 
 class SimilarTradeSummary(CamelModel):
@@ -311,6 +318,17 @@ class SimilarTradeSummary(CamelModel):
     breakdown: list[SimilarityBreakdownRow] = Field(default_factory=list)
 
 
+class WinnerChecklistRow(CamelModel):
+    """Sprint 20 Phase 6 -- one row of the "Compared with your winning
+    trades" checklist: a short characteristic name and whether this
+    candidate matches it. Rendered as a checkmark list (matched) plus a
+    "Missing:" list (not matched) -- see
+    ``app/engines/characteristic_gap_engine.py``'s ``_evaluate_winner_profile``."""
+
+    label: str
+    matched: bool
+
+
 class CharacteristicGaps(CamelModel):
     """Sprint 20 Phase 4 -- "what do my winners have that this
     doesn't / what do my losers have that this also has?" See
@@ -328,6 +346,9 @@ class CharacteristicGaps(CamelModel):
     winner_match_count: int = 0
     winner_match_total: int = 0
     winner_match_summary: str | None = None
+    # Sprint 20 Phase 6 -- structured ✓/✗ checklist version of the same
+    # comparison winner_gaps already describes in prose.
+    winner_checklist: list[WinnerChecklistRow] = Field(default_factory=list)
 
 
 class SetupInsight(CamelModel):

@@ -206,3 +206,29 @@ def test_timeframe_absent_when_not_set():
     entry = {"id": "b", "pair": "EURUSD", "direction": "buy", "timeframe": "M15", "pnl": 5}
     result = search_similar(candidate, [entry], min_similarity=0)
     assert len(result["similar"]) == 1
+
+
+# --- Sprint 20 Phase 6 -- fresh Order Block / rejection strength / FVG size ---
+
+def test_fresh_order_block_matching_scores_higher_than_mismatched():
+    candidate = {"id": "cand", "pair": "GOLDmicro", "direction": "sell", "m15Confirmations": ["Fresh Order Block"]}
+    fresh = {"id": "match", "pair": "GOLDmicro", "direction": "sell", "m15Confirmations": ["Fresh Order Block"], "pnl": 5}
+    mitigated = {"id": "mismatch", "pair": "GOLDmicro", "direction": "sell", "m15Confirmations": ["Mitigated Order Block"], "pnl": -5}
+    result = search_similar(candidate, [fresh, mitigated], min_similarity=0)
+    by_id = {m["id"]: m["similarity"] for m in result["similar"]}
+    assert by_id["match"] > by_id["mismatch"]
+
+
+def test_strong_rejection_and_large_fvg_are_similarity_dimensions():
+    candidate = {
+        "id": "cand", "pair": "EURUSD", "direction": "buy",
+        "m15Confirmations": ["Strong Rejection", "Large FVG"],
+    }
+    same = {
+        "id": "match", "pair": "EURUSD", "direction": "buy",
+        "m15Confirmations": ["Strong Rejection", "Large FVG"], "pnl": 5,
+    }
+    different = {"id": "mismatch", "pair": "EURUSD", "direction": "buy", "m15Confirmations": [], "pnl": -5}
+    result = search_similar(candidate, [same, different], min_similarity=0)
+    by_id = {m["id"]: m["similarity"] for m in result["similar"]}
+    assert by_id["match"] > by_id["mismatch"]

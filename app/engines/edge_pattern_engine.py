@@ -67,15 +67,44 @@ def _pattern_key(entry: dict[str, Any]) -> str | None:
     return "|".join([str(pair).upper(), str(direction).upper(), str(timeframe), str(poi), str(zone), str(session)])
 
 
+def _pattern_row(g: dict[str, Any], rep: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "pair": (rep.get("pair") or None),
+        "direction": rep.get("direction"),
+        "timeframe": rep.get("timeframe"),
+        "poiType": rep.get("h4PoiType"),
+        "premiumDiscount": rep.get("premiumDiscount"),
+        "session": rep.get("session"),
+        "count": g["count"],
+        "wins": g["wins"],
+        "losses": g["losses"],
+        "breakeven": g["breakeven"],
+        "winRate": g["winRate"],
+        "averageRR": g["averageRR"],
+        "expectancy": g["expectancy"],
+    }
+
+
 def build_edge_patterns(history: list[dict[str, Any]] | None) -> dict[str, Any]:
-    """build_edge_patterns(history) -> {patterns: [...], sampleSize,
-    hasEnoughData}.
+    """build_edge_patterns(history) -> {patterns: [...], worstPatterns:
+    [...], sampleSize, hasEnoughData}.
 
     Each ``patterns[]`` entry is one pair+direction+timeframe+POI+zone+
     session combination the trader has logged at least
     ``EDGE_MIN_SAMPLE`` times, ranked by the same win-rate+expectancy
     score ``group_stats`` already uses everywhere else -- purely
-    discovered from history, never a hardcoded "good" combination."""
+    discovered from history, never a hardcoded "good" combination.
+
+    ``worstPatterns`` (Sprint 20 Phase 6 -- "My Worst BTCUSD Sell") is
+    the SAME grouping read from the bottom of the ranked list instead
+    of the top, so the trader can see which exact combinations have
+    actually been costing them, not just which ones have been working.
+    A pattern only qualifies as "worst" by also clearing
+    ``EDGE_MIN_SAMPLE`` -- a single unlucky trade doesn't get to be
+    called a bad pattern, same honesty bar used everywhere else in this
+    engine. Never overlaps with ``patterns`` -- a combination already
+    shown as one of the best isn't repeated as one of the worst even if
+    there aren't many qualifying groups total."""
     history = history or []
     groups = [g for g in group_stats(history, _pattern_key) if g["count"] >= EDGE_MIN_SAMPLE]
     groups.sort(key=lambda g: g["rankScore"], reverse=True)
@@ -89,31 +118,18 @@ def build_edge_patterns(history: list[dict[str, Any]] | None) -> dict[str, Any]:
         if key and key not in key_to_entry:
             key_to_entry[key] = e
 
-    patterns: list[dict[str, Any]] = []
-    for g in groups[:MAX_PATTERNS]:
-        rep = key_to_entry.get(g["key"])
-        if rep is None:
-            continue
-        patterns.append(
-            {
-                "pair": (rep.get("pair") or None),
-                "direction": rep.get("direction"),
-                "timeframe": rep.get("timeframe"),
-                "poiType": rep.get("h4PoiType"),
-                "premiumDiscount": rep.get("premiumDiscount"),
-                "session": rep.get("session"),
-                "count": g["count"],
-                "wins": g["wins"],
-                "losses": g["losses"],
-                "breakeven": g["breakeven"],
-                "winRate": g["winRate"],
-                "averageRR": g["averageRR"],
-                "expectancy": g["expectancy"],
-            }
-        )
+    best_groups = groups[:MAX_PATTERNS]
+    best_keys = {g["key"] for g in best_groups}
+    patterns = [_pattern_row(g, key_to_entry[g["key"]]) for g in best_groups if g["key"] in key_to_entry]
+
+    remaining = [g for g in groups if g["key"] not in best_keys]
+    remaining.sort(key=lambda g: g["rankScore"])
+    worst_groups = remaining[:MAX_PATTERNS]
+    worst_patterns = [_pattern_row(g, key_to_entry[g["key"]]) for g in worst_groups if g["key"] in key_to_entry]
 
     return {
         "patterns": patterns,
+        "worstPatterns": worst_patterns,
         "sampleSize": len(history),
         "hasEnoughData": len(patterns) > 0,
     }

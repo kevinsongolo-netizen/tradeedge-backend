@@ -50,6 +50,16 @@ async def test_placeholder_provider_includes_sprint20_setup_fields():
         assert key in result
 
 
+@pytest.mark.asyncio
+async def test_placeholder_provider_includes_sprint20_phase6_characteristics():
+    """Sprint 20 Phase 6 -- freshness, rejection strength, and FVG size,
+    the three characteristics the trader asked the AI to learn from."""
+    provider = PlaceholderVisionProvider()
+    result = await provider.analyze_screenshot(b"fake-image-bytes", "image/png")
+    for key in ("orderBlockFreshness", "rejectionStrength", "fvgSize"):
+        assert key in result
+
+
 def test_factory_returns_placeholder_when_no_api_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     provider = get_vision_provider()

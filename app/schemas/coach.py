@@ -118,8 +118,25 @@ class EdgePattern(CamelModel):
     expectancy: float
 
 
+class DiscoveredPatternsResponse(CamelModel):
+    """Sprint 20 Phase 6 -- "learn from my screenshots": standalone
+    narrative statements about what separates this trader's own
+    winning trades from their losing trades, discovered from their full
+    history at once (no candidate setup needed). See
+    app/engines/pattern_discovery_engine.py."""
+
+    patterns: list[str] = Field(default_factory=list)
+    winning_trade_count: int = 0
+    losing_trade_count: int = 0
+    has_enough_data: bool = False
+
+
 class EdgePatternsResponse(CamelModel):
     patterns: list[EdgePattern] = Field(default_factory=list)
+    # Sprint 20 Phase 6 -- "My Worst BTCUSD Sell": the same combination
+    # ranking, read from the bottom instead of the top. See
+    # app/engines/edge_pattern_engine.py's build_edge_patterns docstring.
+    worst_patterns: list[EdgePattern] = Field(default_factory=list)
     sample_size: int
     has_enough_data: bool
 
@@ -142,3 +159,12 @@ class TradeReviewResult(CamelModel):
     similar_losses: int = 0
     lessons: list[str] = Field(default_factory=list)
     patterns: list[str] = Field(default_factory=list)
+    # Sprint 20 Phase 6 -- "Analyze Trade": for a losing trade, why it
+    # likely didn't work out -- purely pattern-matched against the
+    # trader's OWN similar losing/winning trades (characteristic_gap_
+    # engine), never a fixed rule or a verdict on the setup itself.
+    # Empty/None when the trade wasn't a loss, or there wasn't enough
+    # similar history yet to say anything (same MIN_SAMPLE_FOR_GAP
+    # honesty bar as the pre-trade insight).
+    possible_reasons: list[str] = Field(default_factory=list)
+    most_likely_cause: str | None = None

@@ -213,3 +213,31 @@ def test_edge_patterns_excludes_trades_missing_any_dimension(client):
     resp = client.get("/api/v1/coach/edge-patterns")
     assert resp.status_code == 200, resp.text
     assert resp.json()["patterns"] == []
+
+
+# --- GET /coach/discovered-patterns (Sprint 20 Phase 6) ------------------------
+
+def test_discovered_patterns_empty_with_no_trades(client):
+    resp = client.get("/api/v1/coach/discovered-patterns")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["patterns"] == []
+    assert body["hasEnoughData"] is False
+
+
+def test_discovered_patterns_surfaces_real_separation(client):
+    for i in range(4):
+        client.post(
+            "/api/v1/trades",
+            json={"id": f"disc-w{i}", "date": f"2026-02-0{i + 1}", "session": "London", "pnl": 40.0},
+        )
+    for i in range(4):
+        client.post(
+            "/api/v1/trades",
+            json={"id": f"disc-l{i}", "date": f"2026-02-1{i + 1}", "session": "Asian", "pnl": -25.0},
+        )
+    resp = client.get("/api/v1/coach/discovered-patterns")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["hasEnoughData"] is True
+    assert any("London" in p for p in body["patterns"])

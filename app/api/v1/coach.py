@@ -10,6 +10,7 @@ from app.deps import get_current_user_id
 from app.schemas.coach import (
     CoachDeepDive,
     CoachInsightsResponse,
+    DiscoveredPatternsResponse,
     EdgePatternsResponse,
     PlaybookResponse,
     TradeReviewRequest,
@@ -86,6 +87,25 @@ async def coach_edge_patterns(
     service = CoachService(session)
     result = await service.edge_patterns(user_id)
     return EdgePatternsResponse(**result)
+
+
+@router.get(
+    "/discovered-patterns",
+    response_model=DiscoveredPatternsResponse,
+    summary="Sprint 20 Phase 6 — patterns auto-discovered across the trader's whole screenshot/history",
+)
+async def coach_discovered_patterns(
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db_session),
+) -> DiscoveredPatternsResponse:
+    """"Learn from my screenshots" -- standalone statements about what
+    separates this trader's own winning trades from their losing
+    trades, discovered across their whole history at once (not tied to
+    any one candidate setup). See
+    app/engines/pattern_discovery_engine.py's docstring."""
+    service = CoachService(session)
+    result = await service.discovered_patterns(user_id)
+    return DiscoveredPatternsResponse(**result)
 
 
 @router.post(

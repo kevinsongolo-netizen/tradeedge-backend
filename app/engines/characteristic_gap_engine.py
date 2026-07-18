@@ -47,7 +47,43 @@ _CATEGORICAL_DIMENSIONS: list[tuple[str, str]] = [
     ("premiumDiscount", "zone"),
     ("session", "session"),
     ("h4Trend", "trend"),
+    # Sprint 20 Phase 6 -- the trader's own example of this comparison
+    # explicitly listed "Same Pair"/"Same Session" alongside the
+    # structural dimensions, so pair/direction join the winner-profile
+    # comparison here too (they were previously only compared inside
+    # similar_engine's search itself, never surfaced as their own
+    # winner-profile checklist rows).
+    ("pair", "pair"),
+    ("direction", "direction"),
 ]
+
+# Short checklist labels (Sprint 20 Phase 6) -- (matched label, missing
+# label template). Missing uses the dominant WINNING value itself as
+# the tag name (e.g. "London Session", "Bearish Order Block") rather
+# than a generic "Different X", since that is what actually teaches the
+# trader something ("your winners are usually London session -- this
+# one is Asian").
+_CATEGORICAL_CHECKLIST_LABELS: dict[str, tuple[str, str]] = {
+    "h4PoiType": ("Same Order Block / POI Type", "{value}"),
+    "premiumDiscount": ("Same Zone", "{value} Zone"),
+    "session": ("Same Session", "{value} Session"),
+    "h4Trend": ("Same Trend", "{value} Trend"),
+    "pair": ("Same Pair", "{value}"),
+    "direction": ("Same Direction", "{value}"),
+}
+
+# Tag-style dimensions use the SAME display name whether matched or
+# missing (e.g. "✓ Liquidity Sweep" / "✗ Liquidity Sweep") -- the tag
+# itself IS the characteristic being checked for.
+_TAG_CHECKLIST_LABELS: dict[str, str] = {
+    "BOS": "Break of Structure",
+    "CHOCH": "Change of Character",
+    "Liquidity Sweep": "Liquidity Sweep",
+    "FVG": "Fair Value Gap",
+    "Fresh Order Block": "First Touch Order Block",
+    "Strong Rejection": "Strong Rejection Candle",
+    "Large FVG": "Large Fair Value Gap",
+}
 
 # Structural tags (BOS/CHoCH/liquidity sweep/FVG) live inside
 # m15Confirmations as a list of strings on both a candidate and a
@@ -57,6 +93,13 @@ _TAG_DIMENSIONS: list[tuple[str, str]] = [
     ("CHOCH", "a change of character"),
     ("Liquidity Sweep", "a liquidity sweep"),
     ("FVG", "an FVG"),
+    # Sprint 20 Phase 6 -- the trader's own worked examples ("First
+    # Touch Order Block", "Strong Rejection Candle", "Large Fair Value
+    # Gap") named these specifically as things to compare winners
+    # against, alongside the existing structural tags above.
+    ("Fresh Order Block", "a fresh, untested Order Block"),
+    ("Strong Rejection", "a strong rejection candle"),
+    ("Large FVG", "a large Fair Value Gap"),
 ]
 
 # Sprint 20 Phase 5 -- continuous dimensions (stop size, R:R). A single
@@ -88,6 +131,16 @@ _CONTINUOUS_DIMENSIONS: list[tuple[str, str, str, str, Any]] = [
     ("stopDistancePct", "stop loss size", "tighter", "wider", _stop_distance_pct),
     ("rr", "risk:reward", "lower", "higher", _rr_value),
 ]
+
+# Checklist labels for the continuous dimensions above -- (matched
+# label, missing label). Missing names whichever direction the
+# candidate actually needs to move in (e.g. "Higher Risk:Reward"),
+# mirroring the trader's own example phrasing ("Smaller stop loss,
+# Higher R:R").
+_CONTINUOUS_CHECKLIST_LABELS: dict[str, tuple[str, str]] = {
+    "stopDistancePct": ("Similar Stop Size", "{word} Stop Loss"),
+    "rr": ("Similar Risk:Reward", "{word} Risk:Reward"),
+}
 
 
 def _dominant_value(trades: list[dict[str, Any]], field: str) -> tuple[Any, float]:
@@ -145,7 +198,9 @@ def _evaluate_winner_profile(candidate: dict[str, Any], winners: list[dict[str, 
                 f"({share * 100:.0f}% of {len(winners)} similar wins) -- this one is "
                 f"{candidate.get(field) or 'not set'}."
             )
-        rows.append({"matched": matched, "gapText": gap_text})
+        matched_label, missing_template = _CATEGORICAL_CHECKLIST_LABELS.get(field, (f"Same {label}", "{value}"))
+        checklist_label = matched_label if matched else missing_template.format(value=value)
+        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label})
 
     for tag, label in _TAG_DIMENSIONS:
         share = _tag_presence_share(winners, tag)
@@ -155,7 +210,8 @@ def _evaluate_winner_profile(candidate: dict[str, Any], winners: list[dict[str, 
         gap_text = None
         if not matched:
             gap_text = f"{share * 100:.0f}% of your similar winning trades had {label} -- this one doesn't."
-        rows.append({"matched": matched, "gapText": gap_text})
+        checklist_label = _TAG_CHECKLIST_LABELS.get(tag, tag)
+        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label})
 
     for field, label, lower_word, higher_word, extractor in _CONTINUOUS_DIMENSIONS:
         avg = _continuous_average(winners, extractor)
@@ -165,13 +221,17 @@ def _evaluate_winner_profile(candidate: dict[str, Any], winners: list[dict[str, 
         ratio = candidate_value / avg
         matched = _NOTABLY_LOWER_RATIO <= ratio <= _NOTABLY_HIGHER_RATIO
         gap_text = None
+        direction = higher_word if ratio < _NOTABLY_LOWER_RATIO else lower_word
         if not matched:
-            direction = higher_word if ratio < _NOTABLY_LOWER_RATIO else lower_word
             gap_text = (
                 f"Your winning trades usually have a {direction} {label} (avg {avg:.2f}) "
                 f"than this one ({candidate_value:.2f})."
             )
-        rows.append({"matched": matched, "gapText": gap_text})
+        matched_label, missing_template = _CONTINUOUS_CHECKLIST_LABELS.get(
+            field, (f"Similar {label}", "{word} " + label.title())
+        )
+        checklist_label = matched_label if matched else missing_template.format(word=direction.capitalize())
+        rows.append({"matched": matched, "gapText": gap_text, "checklistLabel": checklist_label})
 
     return rows
 
@@ -208,10 +268,17 @@ def build_characteristic_gaps(
     winner_match_count = 0
     winner_match_total = 0
     winner_match_summary: str | None = None
+    # Sprint 20 Phase 6 -- "Compared with your winning trades" checklist:
+    # every evaluable dimension as a short ✓/✗ label (not just the
+    # unmatched ones as prose sentences, which winnerGaps already gives).
+    # ``matched`` rows render under a checkmark list, unmatched ones
+    # under a "Missing:" heading -- see the trader's own worked example.
+    winner_checklist: list[dict[str, Any]] = []
 
     if len(winners) >= MIN_SAMPLE_FOR_GAP:
         profile = _evaluate_winner_profile(candidate, winners)
         winner_gaps = [row["gapText"] for row in profile if row["gapText"]]
+        winner_checklist = [{"label": row["checklistLabel"], "matched": row["matched"]} for row in profile]
         winner_match_total = len(profile)
         winner_match_count = sum(1 for row in profile if row["matched"])
         if winner_match_total > 0:
@@ -259,4 +326,5 @@ def build_characteristic_gaps(
         "winnerMatchCount": winner_match_count,
         "winnerMatchTotal": winner_match_total,
         "winnerMatchSummary": winner_match_summary,
+        "winnerChecklist": winner_checklist,
     }

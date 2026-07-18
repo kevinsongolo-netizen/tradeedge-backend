@@ -54,6 +54,21 @@ def test_candidate_from_vision_extraction_handles_missing_direction():
     assert candidate["direction"] is None
 
 
+def test_candidate_from_vision_extraction_maps_phase6_characteristics():
+    """Sprint 20 Phase 6 -- order block freshness, rejection strength,
+    and FVG size become tags on m15Confirmations, same mechanism as
+    BOS/CHoCH/liquidity sweep/FVG."""
+    fresh = candidate_from_vision_extraction({"orderBlockFreshness": "Fresh", "rejectionStrength": "Strong", "fvgSize": "Large"})
+    assert "Fresh Order Block" in fresh["m15Confirmations"]
+    assert "Strong Rejection" in fresh["m15Confirmations"]
+    assert "Large FVG" in fresh["m15Confirmations"]
+
+    mitigated = candidate_from_vision_extraction({"orderBlockFreshness": "Mitigated", "rejectionStrength": "Weak", "fvgSize": "Small"})
+    assert "Mitigated Order Block" in mitigated["m15Confirmations"]
+    assert "Strong Rejection" not in mitigated["m15Confirmations"]
+    assert "Large FVG" not in mitigated["m15Confirmations"]
+
+
 def test_insufficient_history_returns_honest_message_not_a_fake_result():
     candidate = {"pair": "GOLDmicro", "direction": "sell", "rr": 1.8}
     thin_history = [{"id": "1", "pair": "GOLDmicro", "direction": "sell", "pnl": 10}]
@@ -413,3 +428,30 @@ def test_candidate_from_vision_extraction_maps_timeframe():
     extraction = {"pair": "EURUSD", "orderDirection": "BUY", "timeframe": "M15"}
     candidate = candidate_from_vision_extraction(extraction)
     assert candidate["timeframe"] == "M15"
+
+
+def test_breakdown_points_are_signed_percent_of_total_weight():
+    """Sprint 20 Phase 6 -- each breakdown row also carries its actual
+    signed point contribution (e.g. +20/-10), not just matched/mismatched,
+    so the UI can show '✓ Same Pair (+20%)' / '✗ Different Session (-10%)'.
+    Matched rows get positive points, mismatched rows negative, and the
+    magnitude is that dimension's weight share of everything evaluated."""
+    matches = [
+        {"id": f"w{i}", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+         "entry": 4000.0, "sl": 4010.0, "tp": 3970.0, "rr": 3.0, "pnl": 60.0,
+         "session": "New York", "h4Trend": "Bullish"}
+        for i in range(5)
+    ]
+    candidate = {"id": "candidate", "pair": "GOLDmicro", "direction": "sell", "asset": "Metals",
+                 "entry": 4001.0, "sl": 4011.0, "tp": 3971.0, "rr": 3.0,
+                 "session": "London", "h4Trend": "Bearish"}
+    insight = build_setup_insight(candidate, matches)
+    row = insight["topSimilar"][0]
+    by_feature = {b["feature"]: b for b in row["breakdown"]}
+    assert by_feature["pair"]["points"] > 0
+    assert by_feature["session"]["points"] < 0
+    assert by_feature["h4Trend"]["points"] < 0
+    total_weight_points = sum(abs(b["points"]) for b in row["breakdown"])
+    # Signed points are each a share of 100 -- the total magnitude across
+    # every evaluated dimension should land close to 100.
+    assert 90 <= total_weight_points <= 110

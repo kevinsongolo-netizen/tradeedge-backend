@@ -182,3 +182,35 @@ def test_loser_echo_for_similar_rr():
     candidate = {"rr": 1.25, "m15Confirmations": []}
     result = build_characteristic_gaps(candidate, similar)
     assert any("risk:reward" in e.lower() for e in result["loserEchoes"])
+
+
+def test_winner_checklist_has_short_labels_for_matched_and_missing():
+    """Sprint 20 Phase 6 -- 'Compared with your winning trades' checklist:
+    every evaluable dimension appears with a short ✓/✗-style label, not
+    just the unmatched ones as prose (winnerGaps already does that)."""
+    similar = [
+        _trade(f"w{i}", "Win", pair="BTCUSD", direction="sell", session="London",
+               m15Confirmations=["BOS", "Liquidity Sweep"])
+        for i in range(4)
+    ]
+    candidate = {
+        "pair": "BTCUSD",       # matches
+        "direction": "sell",    # matches
+        "session": "New York",  # mismatch
+        "m15Confirmations": ["BOS"],  # missing Liquidity Sweep
+    }
+    result = build_characteristic_gaps(candidate, similar)
+    labels = {row["label"]: row["matched"] for row in result["winnerChecklist"]}
+    assert labels.get("Same Pair") is True
+    assert labels.get("Same Direction") is True
+    assert "London Session" in labels
+    assert labels["London Session"] is False
+    assert "Liquidity Sweep" in labels
+    assert labels["Liquidity Sweep"] is False
+
+
+def test_winner_checklist_empty_without_enough_winners():
+    similar = [_trade("w1", "Win"), _trade("l1", "Loss")]
+    candidate = {"m15Confirmations": []}
+    result = build_characteristic_gaps(candidate, similar)
+    assert result["winnerChecklist"] == []

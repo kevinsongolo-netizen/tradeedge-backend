@@ -101,6 +101,16 @@ DEFAULT_SIMILARITY_WEIGHTS: dict[str, float] = {
     # shouldn't dominate direction/pair/POI, which say more about the
     # setup itself.
     "orderType": 3,
+    # Sprint 20 Phase 6 -- three more characteristics the trader asked
+    # the AI to learn from directly: whether the order block/FVG is
+    # fresh (untested) vs. already mitigated, how strong the rejection
+    # candle from the zone was, and whether the FVG is large relative
+    # to recent candles. Same boolean-presence mechanism as bos/choch/
+    # liquiditySweep/fvg -- modest weights, since these are refinements
+    # on top of h4PoiType/fvg rather than a trade's primary identity.
+    "freshOrderBlock": 4,
+    "strongRejection": 3,
+    "largeFvg": 3,
 }
 
 _NEWS_RANK = {"None": 0, "Low": 1, "Medium": 2, "High": 3}
@@ -265,6 +275,12 @@ def _feature_similarity(feature: str, candidate: dict, entry: dict, candidate_ta
         return _bool_presence("Liquidity Sweep", candidate_tags, entry_tags)
     if feature == "fvg":
         return _bool_presence("FVG", candidate_tags, entry_tags)
+    if feature == "freshOrderBlock":
+        return _bool_presence("Fresh Order Block", candidate_tags, entry_tags)
+    if feature == "strongRejection":
+        return _bool_presence("Strong Rejection", candidate_tags, entry_tags)
+    if feature == "largeFvg":
+        return _bool_presence("Large FVG", candidate_tags, entry_tags)
     if feature == "news":
         return _news_similarity(candidate.get("news"), entry.get("news"))
     if feature == "rr":
@@ -305,8 +321,16 @@ def _feature_present(feature: str, candidate: dict, candidate_tags: list[str]) -
         return bool(candidate.get("h4PoiType") or candidate.get("poi"))
     if feature == "premiumDiscount":
         return bool(candidate.get("premiumDiscount"))
-    if feature in ("bos", "choch", "liquiditySweep", "fvg"):
-        tag = {"bos": "BOS", "choch": "CHOCH", "liquiditySweep": "Liquidity Sweep", "fvg": "FVG"}[feature]
+    if feature in ("bos", "choch", "liquiditySweep", "fvg", "freshOrderBlock", "strongRejection", "largeFvg"):
+        tag = {
+            "bos": "BOS",
+            "choch": "CHOCH",
+            "liquiditySweep": "Liquidity Sweep",
+            "fvg": "FVG",
+            "freshOrderBlock": "Fresh Order Block",
+            "strongRejection": "Strong Rejection",
+            "largeFvg": "Large FVG",
+        }[feature]
         return tag in candidate_tags
     if feature == "news":
         return candidate.get("news") in _NEWS_RANK
