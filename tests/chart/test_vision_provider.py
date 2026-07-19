@@ -5,6 +5,8 @@ VisionProviderError on failure rather than leaking an SDK exception."""
 import pytest
 
 from app.chart.vision_provider import (
+    EVIDENCE_FIELDS,
+    MAX_EVIDENCE_BULLETS_PER_FIELD,
     AnthropicVisionProvider,
     CachingVisionProvider,
     PlaceholderVisionProvider,
@@ -683,3 +685,154 @@ async def test_caching_vision_provider_returns_a_copy_not_a_shared_reference(mon
     second = await provider.analyze_screenshot(image_bytes, "image/png")
 
     assert second["pair"] == "BTCUSD"
+
+
+@pytest.mark.asyncio
+async def test_placeholder_provider_includes_evidence_for_every_interpretive_field():
+    """Phase 12: the trader asked to understand HOW the AI reached each
+    conclusion, not just what it concluded. The placeholder provider's
+    output must have the same shape a real read would -- one evidence
+    entry per interpretive field, honestly labeled since there's no
+    real screenshot behind it."""
+    provider = PlaceholderVisionProvider()
+    result = await provider.analyze_screenshot(b"fake-image-bytes", "image/png")
+    assert set(result["evidence"].keys()) == set(EVIDENCE_FIELDS)
+    for field in EVIDENCE_FIELDS:
+        assert isinstance(result["evidence"][field], list)
+        assert len(result["evidence"][field]) >= 1
+        assert "PLACEHOLDER" in result["evidence"][field][0]
+
+
+def _evidence_payload(**overrides):
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": "Bullish FVG mitigated",
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 80,
+        "pair": "BTCUSD", "timeframe": "M15", "orderDirection": "BUY",
+        "orderType": "Buy Limit", "entry": 63984.27, "stopLoss": 63500.0,
+        "takeProfit": 65000.0, "riskReward": 2.0, "lots": 0.01,
+        "poiType": "Bullish Order Block",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_passes_through_valid_evidence_bullets(monkeypatch):
+    """Happy path: the model follows the schema exactly -- its evidence
+    bullets should flow through untouched (aside from the standard
+    shape guarantee applied to every field)."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = _evidence_payload(evidence={
+        "fvgStatus": ["Price closed back inside the gap on the last two candles", "The imbalance is largely filled"],
+        "trend": ["Higher highs and higher lows across the last 5 candles"],
+    })
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["evidence"]["fvgStatus"] == [
+        "Price closed back inside the gap on the last two candles",
+        "The imbalance is largely filled",
+    ]
+    assert result["evidence"]["trend"] == ["Higher highs and higher lows across the last 5 candles"]
+    # Every other EVIDENCE_FIELDS key the model didn't mention still
+    # exists, just empty -- never absent.
+    assert result["evidence"]["structure"] == []
+    assert set(result["evidence"].keys()) == set(EVIDENCE_FIELDS)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_defaults_missing_evidence_key_entirely(monkeypatch):
+    """The model can still omit "evidence" from its JSON altogether
+    (older prompt caching, a genuinely lazy response, etc.) -- this
+    must never KeyError or leave the field missing from the result."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = _evidence_payload()  # no "evidence" key at all
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert set(result["evidence"].keys()) == set(EVIDENCE_FIELDS)
+    assert all(result["evidence"][field] == [] for field in EVIDENCE_FIELDS)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_coerces_malformed_evidence_shapes(monkeypatch):
+    """A vision model can drift from the schema in small ways -- a bare
+    string instead of a one-item list, non-string junk inside a list,
+    blank/whitespace-only strings, or a field that isn't even a
+    list/string at all. None of that should reach the UI as-is."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = _evidence_payload(evidence={
+        "fvgStatus": "A single bare string instead of a list",
+        "trend": ["Real evidence", "  ", 42, None, ""],
+        "structure": 12345,  # not a list or string at all
+    })
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["evidence"]["fvgStatus"] == ["A single bare string instead of a list"]
+    assert result["evidence"]["trend"] == ["Real evidence"]
+    assert result["evidence"]["structure"] == []
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_caps_evidence_bullets_per_field(monkeypatch):
+    """A model that gets carried away and lists ten bullets for one
+    field should be trimmed to MAX_EVIDENCE_BULLETS_PER_FIELD -- a
+    handful of concrete bullets is more verifiable than a wall of text."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    long_list = [f"Evidence bullet number {i}" for i in range(10)]
+    payload = _evidence_payload(evidence={"fvgStatus": long_list})
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert len(result["evidence"]["fvgStatus"]) == MAX_EVIDENCE_BULLETS_PER_FIELD
+    assert result["evidence"]["fvgStatus"] == long_list[:MAX_EVIDENCE_BULLETS_PER_FIELD]

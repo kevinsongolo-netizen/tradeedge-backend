@@ -38,6 +38,19 @@ _EXTRACTION_FIELDS = (
     "takeProfit", "riskReward", "lots", "poiType", "trend", "structure",
     "currentPriceContext", "liquidity", "latestEvent", "fvgStatus",
     "premiumDiscount", "readConfidence", "numberConsistencyWarning",
+    # Sprint 20 Phase 12 ("Evidence-Based Reasoning") -- orderBlockFreshness/
+    # rejectionStrength/fvgSize (plus their Phase 9 honesty-confidence
+    # scores) were already computed by the vision provider but never
+    # surfaced in the UI-facing extraction -- only used internally by
+    # candidate_from_vision_extraction/edge_profile_engine. The trader's
+    # own worked examples of conclusions they want explained ("Order
+    # Block is mitigated", "Weak rejection candle") are exactly these
+    # two fields, so they need to be visible here for their matching
+    # "evidence" bullets to have a conclusion to attach to.
+    "orderBlockFreshness", "orderBlockFreshnessConfidence",
+    "rejectionStrength", "rejectionStrengthConfidence",
+    "fvgSize", "fvgMitigationConfidence",
+    "evidence",
 )
 
 

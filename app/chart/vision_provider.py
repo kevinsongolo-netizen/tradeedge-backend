@@ -68,6 +68,28 @@ low-confidence interpretation ("Possible concern (38% confidence): ...")
 instead of stating it as settled fact. Directly-observed facts (pair,
 direction, entry/SL/TP, BOS/CHoCH/OB/premium-discount presence) are
 unaffected -- those stay exactly as confident as they were.
+
+Sprint 20 Phase 12 ("Evidence-Based Reasoning") -- the trader's own
+framing, after Phase 11 closed the two-independent-reads gap: "I want
+to understand how the AI reached each conclusion, not just what it
+concluded." Every interpretive field the model produces (trend,
+structure, bias, currentPriceContext, liquidity, latestEvent,
+fvgStatus, premiumDiscount, poiType, orderBlockFreshness,
+rejectionStrength, fvgSize -- see EVIDENCE_FIELDS) now comes with a
+matching list of concrete visual evidence bullets in the new
+``evidence`` field, e.g. "Bullish FVG mitigated" paired with "Price
+closed back inside the gap on the last two candles." This is a direct
+extension of Phase 9's own reasoning (never assert a judgment call with
+unearned certainty) -- Phase 9 added an honest CONFIDENCE number for
+the three hardest judgment calls; Phase 12 adds the actual EVIDENCE
+behind every judgment call, so a low or high confidence score is
+itself verifiable against what the model says it actually saw, rather
+than a bare number the trader has to take on faith. Deliberately NOT
+adding new conclusions/fields beyond this (the trader was explicit:
+"rather than adding more features, focus on making every AI
+explanation evidence-based") -- ``_ensure_evidence_shape`` below only
+ever fills in gaps or trims what the model already produces, it never
+invents a new interpretation.
 """
 from __future__ import annotations
 
@@ -128,7 +150,36 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     "equalLowsNearby": "true | false | null -- are there visible equal lows (resting liquidity) near price?",
     "bosType": "Internal | External | null -- if a break of structure is marked, is it an internal (minor swing) or external (major swing) BOS?",
     "touchNumber": "First | Second | Third+ | null -- is this the first, second, or third-or-later time price has touched the order block/FVG the entry is based on?",
+    # --- Sprint 20 Phase 12 ("Evidence-Based Reasoning") -- the trader's
+    # own framing: "I want to understand how the AI reached each
+    # conclusion, not just what it concluded." Every interpretive field
+    # above (as opposed to numbers/labels transcribed directly off the
+    # chart, like pair/entry/orderType) gets a matching list of short,
+    # concrete visual evidence bullets here -- see EVIDENCE_FIELDS and
+    # this module's Phase 12 docstring note below for the full
+    # rationale and the exact set of fields covered.
+    "evidence": {field: "array of short strings -- concrete visual evidence for this specific conclusion, e.g. 'Price closed back inside the gap on the last two candles' -- empty array if there is genuinely nothing to point to" for field in ["trend", "structure", "bias", "currentPriceContext", "liquidity", "latestEvent", "fvgStatus", "premiumDiscount", "poiType", "orderBlockFreshness", "rejectionStrength", "fvgSize"]},
 }
+
+# The exact set of interpretive/judgment fields Phase 12 requires
+# evidence for -- everything in the schema above that's an AI READING
+# or INTERPRETATION of the chart, not a value transcribed directly off
+# a label (pair/timeframe/orderType/orderDirection/entry/stopLoss/
+# takeProfit/riskReward/lots/equalHighsNearby/equalLowsNearby/bosType/
+# touchNumber are excluded: those are read straight off what's already
+# printed on the chart or order panel, not inferred, so there's no
+# separate "reasoning" to show -- the transcribed value already IS the
+# evidence).
+EVIDENCE_FIELDS: tuple[str, ...] = (
+    "trend", "structure", "bias", "currentPriceContext", "liquidity",
+    "latestEvent", "fvgStatus", "premiumDiscount", "poiType",
+    "orderBlockFreshness", "rejectionStrength", "fvgSize",
+)
+
+# Never let one field's evidence list balloon into an essay -- a
+# handful of concrete bullets is more verifiable (and more readable in
+# the UI) than a long, hedging paragraph masquerading as a list.
+MAX_EVIDENCE_BULLETS_PER_FIELD = 4
 
 
 class VisionProvider(ABC):
@@ -196,6 +247,10 @@ class PlaceholderVisionProvider(VisionProvider):
             "bosType": "External",
             "touchNumber": "First",
             "numberConsistencyWarning": None,
+            "evidence": {
+                field: [f"PLACEHOLDER — example evidence for {field} (no vision API key configured yet)"]
+                for field in EVIDENCE_FIELDS
+            },
             "provider": self.name,
             "isPlaceholder": True,
         }
@@ -320,6 +375,42 @@ def _apply_number_sanity_check(parsed: dict[str, Any]) -> None:
             parsed["riskReward"] = round(reward / risk, 2)
 
 
+def _ensure_evidence_shape(parsed: dict[str, Any]) -> None:
+    """Sprint 20 Phase 12 -- never trust the model's ``evidence`` object
+    blindly, same philosophy as every other post-processing step in
+    this module. The prompt asks for a bullet list per EVIDENCE_FIELDS
+    key, but a vision model can still omit the whole key, omit one
+    field's list, return a single string instead of a list, or return a
+    list containing non-string junk -- none of that should ever reach
+    the UI as-is or make downstream code need to defensively re-check
+    every shape.
+
+    Guarantees, after this runs: ``parsed["evidence"]`` is always a
+    dict with EXACTLY the keys in EVIDENCE_FIELDS (missing ones default
+    to an empty list, never absent entirely), each value is always a
+    list of non-empty strings, and each list is capped at
+    MAX_EVIDENCE_BULLETS_PER_FIELD so one over-eager field can't turn
+    into a wall of text in the UI."""
+    raw_evidence = parsed.get("evidence")
+    if not isinstance(raw_evidence, dict):
+        raw_evidence = {}
+
+    cleaned: dict[str, list[str]] = {}
+    for field in EVIDENCE_FIELDS:
+        bullets = raw_evidence.get(field)
+        if isinstance(bullets, str):
+            # The model occasionally collapses a one-item list into a
+            # bare string despite the schema hint -- still one valid
+            # piece of evidence, not worth discarding over a shape slip.
+            bullets = [bullets]
+        if not isinstance(bullets, list):
+            bullets = []
+        clean_bullets = [b.strip() for b in bullets if isinstance(b, str) and b.strip()]
+        cleaned[field] = clean_bullets[:MAX_EVIDENCE_BULLETS_PER_FIELD]
+
+    parsed["evidence"] = cleaned
+
+
 class AnthropicVisionProvider(VisionProvider):
     """Real vision analysis via Claude. Only imports/uses the
     ``anthropic`` SDK when actually constructed (i.e. only when an API
@@ -368,6 +459,19 @@ class AnthropicVisionProvider(VisionProvider):
             "the zone, a long obvious reversal wick, etc.); otherwise report a "
             "realistic lower confidence (30-60) rather than defaulting to a "
             "confident-sounding label you can't actually back up. "
+            "ALSO IMPORTANT -- never state an interpretation without backing "
+            "it up. For every field listed in \"evidence\" below (trend, "
+            "structure, bias, currentPriceContext, liquidity, latestEvent, "
+            "fvgStatus, premiumDiscount, poiType, orderBlockFreshness, "
+            "rejectionStrength, fvgSize), list the SPECIFIC, concrete visual "
+            "evidence from THIS screenshot that led you to that conclusion -- "
+            "e.g. 'Price closed back inside the gap on the last two candles' "
+            "or 'Long lower wick rejecting the order block zone', not vague "
+            "restatements like 'the chart shows this' or 'it looks bullish'. "
+            "1-3 bullets per field is usually enough; use an empty array "
+            "for a field if you genuinely have nothing concrete to point to "
+            "(and let that honestly show up as lower confidence, rather than "
+            "inventing evidence to justify a conclusion you're not sure of). "
             "Respond with ONLY a JSON object with exactly these keys: "
             f"{json.dumps(VISION_ANALYSIS_SCHEMA_HINT)}. "
             "If you cannot confidently determine a field from the image, use "
@@ -390,7 +494,11 @@ class AnthropicVisionProvider(VisionProvider):
             encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
             response = await client.messages.create(
                 model=self._model,
-                max_tokens=1024,
+                # Sprint 20 Phase 12: evidence bullets for 12 fields
+                # add meaningfully to the response length -- 1024 was
+                # occasionally tight even before this, and truncation
+                # mid-JSON is exactly what breaks _extract_json_object.
+                max_tokens=2048,
                 messages=[
                     {
                         "role": "user",
@@ -427,6 +535,7 @@ class AnthropicVisionProvider(VisionProvider):
         parsed["isPlaceholder"] = False
         _reconcile_direction_with_order_type(parsed)
         _apply_number_sanity_check(parsed)
+        _ensure_evidence_shape(parsed)
         return parsed
 
 

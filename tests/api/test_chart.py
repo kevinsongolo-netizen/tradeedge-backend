@@ -98,6 +98,29 @@ def test_full_analysis_image_returns_extraction_and_insight_no_verdict(client):
         assert forbidden not in serialized
 
 
+def test_full_analysis_image_extraction_includes_evidence_for_every_conclusion(client):
+    """Sprint 20 Phase 12 ("Evidence-Based Reasoning") -- the trader
+    asked to understand HOW the AI reached each conclusion, not just
+    what it concluded. The extraction's "evidence" object must be
+    present with one (possibly-placeholder) entry per interpretive
+    field, and the previously-internal-only orderBlockFreshness/
+    rejectionStrength/fvgSize fields (the trader's own worked examples
+    of conclusions they want explained) must now be visible here too."""
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
+    assert resp.status_code == 200, resp.text
+    extraction = resp.json()["extraction"]
+
+    assert "evidence" in extraction
+    assert isinstance(extraction["evidence"], dict)
+    assert "fvgStatus" in extraction["evidence"]
+    assert len(extraction["evidence"]["fvgStatus"]) >= 1
+
+    assert extraction["orderBlockFreshness"] == "Fresh"
+    assert extraction["rejectionStrength"] == "Strong"
+    assert extraction["fvgSize"] == "Medium"
+
+
 def test_full_analysis_image_reports_thin_history_honestly(client):
     files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
     resp = client.post("/api/v1/chart/full-analysis/image", files=files)

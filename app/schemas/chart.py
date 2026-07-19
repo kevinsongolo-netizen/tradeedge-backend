@@ -270,6 +270,33 @@ class SetupExtraction(CamelModel):
     premium_discount: str
     read_confidence: int
     number_consistency_warning: str | None = None
+    # Sprint 20 Phase 6/9 fields -- computed by the vision provider all
+    # along, newly surfaced here in Phase 12 ("Evidence-Based
+    # Reasoning") so their matching evidence bullets below have a
+    # visible conclusion to attach to (previously only used internally
+    # by candidate_from_vision_extraction/edge_profile_engine).
+    order_block_freshness: str | None = None  # "Fresh" | "Mitigated" | None
+    order_block_freshness_confidence: int | None = None
+    rejection_strength: str | None = None  # "Strong" | "Weak" | "None" | None
+    rejection_strength_confidence: int | None = None
+    fvg_size: str | None = None  # "Large" | "Medium" | "Small" | None
+    fvg_mitigation_confidence: int | None = None
+    # Sprint 20 Phase 12 ("Evidence-Based Reasoning") -- the trader's
+    # own framing: "I want to understand how the AI reached each
+    # conclusion, not just what it concluded." One short list of
+    # concrete visual-evidence bullets per interpretive field (trend,
+    # structure, currentPriceContext, liquidity, latestEvent,
+    # fvgStatus, premiumDiscount, poiType, orderBlockFreshness,
+    # rejectionStrength, fvgSize -- plus "bias", which has its own
+    # evidence entry here even though bias's raw value itself isn't
+    # part of this narrower extraction subset, only the full
+    # fingerprint) -- keyed by field name so the UI can render
+    # "<conclusion>" next to its own "Evidence: ..." bullets rather
+    # than one undifferentiated blob of text. See
+    # app.chart.vision_provider.EVIDENCE_FIELDS for the exact key set
+    # and _ensure_evidence_shape for the guarantee that every key is
+    # always present with a (possibly empty) list of strings.
+    evidence: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class SimilarityBreakdownRow(CamelModel):
