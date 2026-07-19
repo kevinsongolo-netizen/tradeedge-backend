@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -222,6 +223,45 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if start != -1 and end != -1 and end > start:
         return json.loads(stripped[start : end + 1])
     raise json.JSONDecodeError("No JSON object found in vision model response", stripped, 0)
+
+
+def _reconcile_direction_with_order_type(parsed: dict[str, Any]) -> None:
+    """A trader compared Pre-Trade Check and the Chart Analysis Engine
+    against the SAME BTCUSD "Buy Limit" screenshot and found one
+    correctly said BUY while the other said SELL -- both features call
+    the same vision provider, but ``orderDirection`` and ``orderType``
+    are two SEPARATE judgment calls the model makes from one image,
+    and (being independent guesses) they can disagree with each other
+    even on the same screenshot.
+
+    Unlike a genuine number misread -- where either the stop loss or
+    the take profit could plausibly be the wrong one, so
+    ``_apply_number_sanity_check`` below only WARNS rather than
+    guessing which -- ``orderType`` free text directly ENCODES
+    direction by definition: a "Buy Limit"/"Buy Stop"/"Buy" order IS a
+    BUY, a "Sell Limit"/"Sell Stop"/"Sell" order IS a SELL. There's
+    nothing to preserve by trusting a separate, independent
+    ``orderDirection`` guess when it contradicts text that already
+    settles the question -- this deterministically reconciles
+    ``orderDirection`` FROM ``orderType`` whenever ``orderType``
+    unambiguously names exactly one side.
+
+    Runs BEFORE ``_apply_number_sanity_check`` so that check's own
+    SL/TP-vs-direction validation uses the corrected, self-consistent
+    direction -- otherwise a misread direction produces a second,
+    entirely spurious "these numbers look inconsistent" warning on
+    numbers that were actually fine all along (exactly what the
+    trader also saw happen)."""
+    order_type = parsed.get("orderType") or ""
+    has_buy = re.search(r"\bbuy\b", order_type, re.IGNORECASE) is not None
+    has_sell = re.search(r"\bsell\b", order_type, re.IGNORECASE) is not None
+    if has_buy and not has_sell:
+        parsed["orderDirection"] = "BUY"
+    elif has_sell and not has_buy:
+        parsed["orderDirection"] = "SELL"
+    # orderType mentioning both/neither (e.g. a plain "Market" order,
+    # or a garbled read) is genuinely ambiguous -- leave orderDirection
+    # exactly as the model reported it, nothing safe to reconcile.
 
 
 def _apply_number_sanity_check(parsed: dict[str, Any]) -> None:
@@ -382,6 +422,7 @@ class AnthropicVisionProvider(VisionProvider):
 
         parsed.setdefault("provider", self.name)
         parsed["isPlaceholder"] = False
+        _reconcile_direction_with_order_type(parsed)
         _apply_number_sanity_check(parsed)
         return parsed
 

@@ -380,3 +380,114 @@ async def test_anthropic_provider_no_warning_when_sl_tp_missing(monkeypatch):
     monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
     result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
     assert result["numberConsistencyWarning"] is None
+
+
+# --- Sprint 20 Phase 10 ("Direction/OrderType reconciliation") ---------------
+
+@pytest.mark.asyncio
+async def test_buy_limit_order_type_overrides_a_misread_sell_direction(monkeypatch):
+    """A trader found the Chart Analysis Engine reporting SELL on the
+    exact same 'Buy Limit' screenshot Pre-Trade Check correctly called
+    BUY -- orderType and orderDirection are two separate judgment
+    calls on one screenshot and can disagree. Since 'Buy Limit'
+    unambiguously means BUY by definition, orderDirection must be
+    reconciled to BUY regardless of what the model's own orderDirection
+    field said."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Premium", "bias": "SELL", "readConfidence": 82,
+        "pair": "BTCUSD", "timeframe": "M15",
+        # The bug reproduced exactly: model says SELL, but orderType says Buy Limit.
+        "orderDirection": "SELL", "orderType": "Buy Limit",
+        "entry": 63984.27, "stopLoss": 63784.27, "takeProfit": 64351.35,
+        "riskReward": 1.84, "lots": 0.01, "poiType": "Bullish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["orderDirection"] == "BUY"
+    # With direction correctly reconciled to BUY, these SL/TP numbers
+    # (SL below entry, TP above entry) are perfectly consistent -- no
+    # spurious "these numbers look inconsistent with a SELL order"
+    # warning should fire on numbers that were never actually wrong.
+    assert result["numberConsistencyWarning"] is None
+
+
+@pytest.mark.asyncio
+async def test_sell_stop_order_type_overrides_a_misread_buy_direction(monkeypatch):
+    """Mirror case: orderType says Sell Stop but the model's own
+    orderDirection guessed BUY -- must reconcile to SELL."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = {
+        "trend": "Bearish", "structure": "Bearish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 78,
+        "pair": "EURUSD", "timeframe": "H1",
+        "orderDirection": "BUY", "orderType": "Sell Stop",
+        "entry": 1.0850, "stopLoss": 1.0870, "takeProfit": 1.0800,
+        "riskReward": 2.5, "lots": 0.1, "poiType": "Bearish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["orderDirection"] == "SELL"
+    assert result["numberConsistencyWarning"] is None
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_order_type_leaves_direction_untouched(monkeypatch):
+    """A plain 'Market' order type (no buy/sell word) or a null
+    orderType is genuinely ambiguous -- must NOT be reconciled, since
+    there's nothing in the text to safely derive direction from."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Premium", "bias": "SELL", "readConfidence": 60,
+        "pair": "XAUUSD", "timeframe": "M15",
+        "orderDirection": "SELL", "orderType": "Market",
+        "entry": 4001.14, "stopLoss": 3990.0, "takeProfit": 4020.0,
+        "riskReward": None, "lots": 0.06, "poiType": "Bearish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["orderDirection"] == "SELL"
