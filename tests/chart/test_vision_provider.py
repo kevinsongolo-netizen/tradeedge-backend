@@ -6,6 +6,7 @@ import pytest
 
 from app.chart.vision_provider import (
     AnthropicVisionProvider,
+    CachingVisionProvider,
     PlaceholderVisionProvider,
     VisionProviderError,
     get_vision_provider,
@@ -16,8 +17,10 @@ from app.config import get_settings
 @pytest.fixture(autouse=True)
 def _clear_settings_cache():
     get_settings.cache_clear()
+    get_vision_provider.cache_clear()
     yield
     get_settings.cache_clear()
+    get_vision_provider.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -118,9 +121,28 @@ def test_factory_returns_placeholder_when_no_api_key(monkeypatch):
 
 
 def test_factory_returns_anthropic_when_api_key_set(monkeypatch):
+    """Phase 11: the factory now wraps the real provider in a
+    CachingVisionProvider (so identical screenshots resolve to one
+    shared fingerprint across Pre-Trade Check / Chart Analysis Engine),
+    so the returned object is no longer an AnthropicVisionProvider
+    instance directly -- check the wrapped provider's .name and inner
+    type instead, same convention CachingCalendarProvider already uses."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key-not-real")
     provider = get_vision_provider()
-    assert isinstance(provider, AnthropicVisionProvider)
+    assert isinstance(provider, CachingVisionProvider)
+    assert provider.name == "anthropic"
+    assert isinstance(provider._inner, AnthropicVisionProvider)
+
+
+def test_factory_returns_same_cached_instance_across_calls(monkeypatch):
+    """@lru_cache must persist the same CachingVisionProvider instance
+    (and therefore the same cache dict) across calls within one process
+    -- without this, every request would get a fresh, empty cache and
+    the whole point of Phase 11 would be defeated."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key-not-real")
+    first = get_vision_provider()
+    second = get_vision_provider()
+    assert first is second
 
 
 @pytest.mark.asyncio
@@ -491,3 +513,173 @@ async def test_ambiguous_order_type_leaves_direction_untouched(monkeypatch):
     monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
     result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
     assert result["orderDirection"] == "SELL"
+
+
+@pytest.mark.asyncio
+async def test_caching_vision_provider_reuses_result_for_identical_bytes(monkeypatch):
+    """Phase 11: a trader saw the SAME screenshot produce slightly
+    different free-text descriptions between Pre-Trade Check and the
+    Chart Analysis Engine ("Multiple Bullish FVGs marked on chart,
+    appearing mitigated" vs. "Bullish FVG marked and visible on chart")
+    because each upload independently called the vision API. With
+    CachingVisionProvider, the second call with byte-identical image
+    content must return the cached result WITHOUT invoking the inner
+    provider again -- guaranteeing every module reads one shared
+    fingerprint per screenshot."""
+    call_count = {"n": 0}
+    payload = {
+        "trend": "Bullish", "structure": "Bullish",
+        "currentPriceContext": "x", "liquidity": "x",
+        "latestEvent": None,
+        "fvgStatus": "Bullish FVG marked and visible on chart",
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 80,
+        "pair": "BTCUSD", "timeframe": "M15", "orderDirection": "BUY",
+        "orderType": "Buy Limit", "entry": 63984.27, "stopLoss": 63500.0,
+        "takeProfit": 65000.0, "riskReward": 2.0, "lots": 0.01,
+        "poiType": "Bullish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                call_count["n"] += 1
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    inner = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    provider = CachingVisionProvider(inner)
+
+    image_bytes = b"identical-screenshot-bytes"
+    first = await provider.analyze_screenshot(image_bytes, "image/png")
+    second = await provider.analyze_screenshot(image_bytes, "image/png")
+
+    assert call_count["n"] == 1
+    assert first == second
+    assert second["fvgStatus"] == "Bullish FVG marked and visible on chart"
+
+
+@pytest.mark.asyncio
+async def test_caching_vision_provider_calls_inner_again_for_different_bytes(monkeypatch):
+    """Different screenshots are different content -- each must still
+    get its own, independent analysis rather than colliding on a single
+    cache entry."""
+    call_count = {"n": 0}
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 80,
+        "pair": "BTCUSD", "timeframe": "M15", "orderDirection": "BUY",
+        "orderType": "Buy Limit", "entry": 63984.27, "stopLoss": 63500.0,
+        "takeProfit": 65000.0, "riskReward": 2.0, "lots": 0.01,
+        "poiType": "Bullish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                call_count["n"] += 1
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    inner = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    provider = CachingVisionProvider(inner)
+
+    await provider.analyze_screenshot(b"screenshot-one", "image/png")
+    await provider.analyze_screenshot(b"screenshot-two", "image/png")
+
+    assert call_count["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_caching_vision_provider_expires_after_ttl(monkeypatch):
+    """A near-zero TTL should behave like no caching at all -- confirms
+    the cache actually respects its expiry window rather than caching
+    forever regardless of the configured ttl_seconds."""
+    call_count = {"n": 0}
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 80,
+        "pair": "BTCUSD", "timeframe": "M15", "orderDirection": "BUY",
+        "orderType": "Buy Limit", "entry": 63984.27, "stopLoss": 63500.0,
+        "takeProfit": 65000.0, "riskReward": 2.0, "lots": 0.01,
+        "poiType": "Bullish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                call_count["n"] += 1
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    inner = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    provider = CachingVisionProvider(inner, ttl_seconds=0)
+
+    image_bytes = b"identical-screenshot-bytes"
+    await provider.analyze_screenshot(image_bytes, "image/png")
+    await provider.analyze_screenshot(image_bytes, "image/png")
+
+    assert call_count["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_caching_vision_provider_returns_a_copy_not_a_shared_reference(monkeypatch):
+    """Callers (e.g. full_analysis_from_image's fingerprint = dict(raw))
+    already copy defensively, but the cache itself must not hand out the
+    exact same dict object on every hit either -- mutating one caller's
+    result must never be visible to a different caller reading the same
+    cached screenshot."""
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": None,
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 80,
+        "pair": "BTCUSD", "timeframe": "M15", "orderDirection": "BUY",
+        "orderType": "Buy Limit", "entry": 63984.27, "stopLoss": 63500.0,
+        "takeProfit": 65000.0, "riskReward": 2.0, "lots": 0.01,
+        "poiType": "Bullish Order Block",
+    }
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    inner = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    provider = CachingVisionProvider(inner)
+
+    image_bytes = b"identical-screenshot-bytes"
+    first = await provider.analyze_screenshot(image_bytes, "image/png")
+    first["pair"] = "MUTATED"
+    second = await provider.analyze_screenshot(image_bytes, "image/png")
+
+    assert second["pair"] == "BTCUSD"

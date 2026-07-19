@@ -72,9 +72,12 @@ unaffected -- those stay exactly as confident as they were.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
+import time
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import Any
 
 from app.config import get_settings
@@ -427,12 +430,72 @@ class AnthropicVisionProvider(VisionProvider):
         return parsed
 
 
+class CachingVisionProvider(VisionProvider):
+    """A trader compared Pre-Trade Check and the Chart Analysis Engine
+    against the SAME screenshot and found the two features' free-text
+    descriptions of the identical chart didn't quite match each other
+    ("Multiple Bullish FVGs marked on chart, appearing mitigated" vs.
+    "Bullish FVG marked and visible on chart") -- even after Phase 10's
+    orderDirection/orderType reconciliation fixed the more serious
+    BUY/SELL contradiction. Both features already route through the
+    same endpoint and the same get_vision_provider() factory, so the
+    remaining cause isn't two different code paths -- it's that each
+    upload triggers its OWN independent, non-deterministic vision API
+    call, even when the image bytes are byte-for-byte identical.
+
+    This wraps an inner provider with a content-addressed cache keyed
+    by a SHA-256 hash of the image bytes (not by session/trade/endpoint,
+    since a screenshot's content -- not who's asking about it -- is
+    what should determine whether it's "the same analysis"). Every
+    module downstream of get_vision_provider() -- Pre-Trade Check,
+    Chart Analysis Engine, Journal, Similarity Engine, Machine
+    Learning -- now reads the SAME cached extraction ("fingerprint")
+    for the same screenshot, so they can never again disagree about
+    what the AI detected in it.
+
+    A screenshot's content never changes once uploaded, so this could
+    justifiably never expire -- but a generous TTL still bounds memory
+    growth on a long-running process over weeks/months of usage
+    without ever affecting normal usage (re-analyzing the same
+    screenshot minutes or hours apart, which is the actual scenario
+    that prompted this fix).
+
+    Mirrors the same wrapper + cache-clearing-factory pattern already
+    used by CachingCalendarProvider in app/news/calendar_provider.py."""
+
+    def __init__(self, inner: VisionProvider, ttl_seconds: int = 24 * 3600) -> None:
+        self._inner = inner
+        self._ttl = ttl_seconds
+        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self.name = inner.name
+
+    async def analyze_screenshot(self, image_bytes: bytes, mime_type: str) -> dict[str, Any]:
+        key = hashlib.sha256(image_bytes).hexdigest()
+        cached = self._cache.get(key)
+        now = time.monotonic()
+        if cached is not None and (now - cached[0]) < self._ttl:
+            # Defensive copy: callers may mutate the returned dict (e.g.
+            # setdefault, further enrichment) and must never poison the
+            # cached entry shared across every module reading it.
+            return dict(cached[1])
+        result = await self._inner.analyze_screenshot(image_bytes, mime_type)
+        self._cache[key] = (now, result)
+        return dict(result)
+
+
+@lru_cache
 def get_vision_provider() -> VisionProvider:
     """Factory: real provider if a key is configured, placeholder
     otherwise. This is the single switch point — nothing else in the
-    app imports a concrete provider class directly."""
+    app imports a concrete provider class directly.
+
+    @lru_cache makes this return the SAME CachingVisionProvider instance
+    (and therefore the same cache dict) across every request within one
+    running process -- without it, a fresh, empty cache would be built
+    on every single call, defeating the whole point. This mirrors
+    get_calendar_provider()'s identical, already-working pattern."""
     settings = get_settings()
     api_key = getattr(settings, "anthropic_api_key", None)
     if api_key:
-        return AnthropicVisionProvider(api_key=api_key)
+        return CachingVisionProvider(AnthropicVisionProvider(api_key=api_key))
     return PlaceholderVisionProvider()
