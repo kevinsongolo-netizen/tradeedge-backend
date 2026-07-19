@@ -90,6 +90,45 @@ adding new conclusions/fields beyond this (the trader was explicit:
 explanation evidence-based") -- ``_ensure_evidence_shape`` below only
 ever fills in gaps or trims what the model already produces, it never
 invents a new interpretation.
+
+Sprint 20 Phase 13 ("Facts vs. Interpretation vs. Confidence") -- the
+trader's own framing after seeing Phase 12's evidence bullets: "Right
+now, the AI mixes together things it directly sees on the chart with
+things it infers... I want to verify its reasoning instead of simply
+trusting it." Two additions, both purely additive (nothing from Phase
+9/12 was renamed or removed, so every existing consumer -- the
+similarity engine, characteristic-gap engine, edge profile engine, the
+Phase 11 cache, the Phase 12 evidence UI -- keeps working unchanged):
+
+1. ``detectedLabels`` -- a new, deliberately dumb field: literal
+   annotation text visible on the chart (e.g. "Bullish Order Block",
+   "BOS"), no judgment attached. This is the FACTS tier the trader
+   asked for, sitting alongside the already-factual transcribed fields
+   (pair, entry, orderType, ...).
+2. ``confidenceBreakdown`` -- extends Phase 9's idea (an honest 0-100
+   confidence number for a judgment call) to all twelve EVIDENCE_FIELDS
+   instead of just three, and makes each number itself explainable: a
+   list of named positive factors and negative factors with their own
+   point contributions, e.g. "BOS present (+20)" / "Counter-trend
+   liquidity nearby (-10)" -- mirrors the exact same point-weighted-row
+   idea ``app/engines/similar_engine.py``'s similarity breakdown
+   already uses for "why is this trade X% similar", applied here to
+   "why is this conclusion X% confident".
+
+Phase 9's three original flat confidence fields
+(``orderBlockFreshnessConfidence``/``rejectionStrengthConfidence``/
+``fvgMitigationConfidence``) are NOT replaced -- ``_ensure_confidence_
+breakdown_shape`` now derives them FROM ``confidenceBreakdown`` (single
+source of truth, model never asked to state the same number twice),
+so the two existing engines that read those three flat fields directly
+need zero changes and can never drift out of sync with the new
+breakdown.
+
+Same honesty discipline as everywhere else in this module: a model's
+claimed point values are never re-summed or corrected to force exact
+arithmetic (that would mean fabricating a number no one actually
+reasoned about) -- they're sanitized for shape/junk only and displayed
+as the model's own stated reasoning, not audited math.
 """
 from __future__ import annotations
 
@@ -159,6 +198,37 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     # this module's Phase 12 docstring note below for the full
     # rationale and the exact set of fields covered.
     "evidence": {field: "array of short strings -- concrete visual evidence for this specific conclusion, e.g. 'Price closed back inside the gap on the last two candles' -- empty array if there is genuinely nothing to point to" for field in ["trend", "structure", "bias", "currentPriceContext", "liquidity", "latestEvent", "fvgStatus", "premiumDiscount", "poiType", "orderBlockFreshness", "rejectionStrength", "fvgSize"]},
+    # --- Sprint 20 Phase 13 ("Facts vs. Interpretation vs. Confidence")
+    # -- the trader's own framing: "Right now, the AI mixes together
+    # things it directly sees on the chart with things it infers." This
+    # is the FACTS side of that split -- literal chart annotation
+    # labels as your own MT5 indicator drew them (e.g. "Bullish Order
+    # Block", "Bullish FVG", "BOS", "CHoCH", "Discount", "Equal High"),
+    # with NO interpretation attached (not "mitigated", not "likely
+    # filled" -- just that the label is there). What those labels MEAN
+    # stays entirely in the existing interpretive fields above (poiType,
+    # fvgStatus, orderBlockFreshness, etc.) and their evidence/
+    # confidenceBreakdown below -- this field exists purely so the UI
+    # can show an unopinionated "here's what's literally on the chart"
+    # list before any AI reasoning about it.
+    "detectedLabels": "array of short strings -- ONLY the literal annotation labels/text visible on the chart or order panel (e.g. 'Bullish Order Block', 'Bullish FVG', 'BOS', 'CHoCH', 'Discount', 'Equal High'), never an interpretation or judgment -- if a label isn't literally visible, leave it out rather than inferring it belongs there",
+    # --- Sprint 20 Phase 13 continued -- the CONFIDENCE side of the
+    # split: "For every interpretation, show why the confidence is what
+    # it is." One point-weighted breakdown per EVIDENCE_FIELDS entry,
+    # mirroring the same idea the similarity engine already uses for
+    # "why is this trade X% similar" (SimilarityBreakdownRow), applied
+    # here to "why is this conclusion X% confident" -- positive factors
+    # that raise confidence, negative factors that lower it, and the
+    # honest final number, so a confidence score is itself verifiable
+    # against named reasons instead of an unexplained number.
+    "confidenceBreakdown": {
+        field: {
+            "finalConfidence": "0-100 int -- your honest overall confidence in this specific conclusion",
+            "positiveFactors": "array of {reason: short string, points: positive int} -- concrete things that INCREASE your confidence, e.g. {'reason': 'BOS confirms continuation', 'points': 20}",
+            "negativeFactors": "array of {reason: short string, points: negative int} -- concrete things that DECREASE your confidence, e.g. {'reason': 'Counter-trend liquidity nearby', 'points': -10}. Empty array if nothing reduces your confidence.",
+        }
+        for field in ["trend", "structure", "bias", "currentPriceContext", "liquidity", "latestEvent", "fvgStatus", "premiumDiscount", "poiType", "orderBlockFreshness", "rejectionStrength", "fvgSize"]
+    },
 }
 
 # The exact set of interpretive/judgment fields Phase 12 requires
@@ -180,6 +250,28 @@ EVIDENCE_FIELDS: tuple[str, ...] = (
 # handful of concrete bullets is more verifiable (and more readable in
 # the UI) than a long, hedging paragraph masquerading as a list.
 MAX_EVIDENCE_BULLETS_PER_FIELD = 4
+
+# Sprint 20 Phase 13 -- same 12 fields get a point-weighted confidence
+# breakdown as get evidence bullets (one tier deeper: not just WHY a
+# conclusion was reached, but WHY that specific confidence number).
+CONFIDENCE_FIELDS: tuple[str, ...] = EVIDENCE_FIELDS
+
+# Same reasoning as MAX_EVIDENCE_BULLETS_PER_FIELD -- a handful of named
+# factors is more verifiable than an unbounded list of small nudges.
+MAX_CONFIDENCE_FACTORS_PER_FIELD = 5
+
+# Legacy Phase 9 flat confidence fields, each mapped to the Phase 13
+# confidenceBreakdown key that now supersedes it as the single source
+# of truth. _ensure_confidence_breakdown_shape derives these FROM the
+# breakdown (never the reverse) so app/engines/characteristic_gap_
+# engine.py and app/engines/setup_insight_engine.py -- which already
+# read these three flat fields directly -- keep working completely
+# unchanged, with no risk of the two ever silently disagreeing.
+_LEGACY_CONFIDENCE_FIELD_MAP: dict[str, str] = {
+    "orderBlockFreshness": "orderBlockFreshnessConfidence",
+    "rejectionStrength": "rejectionStrengthConfidence",
+    "fvgStatus": "fvgMitigationConfidence",
+}
 
 
 class VisionProvider(ABC):
@@ -250,6 +342,26 @@ class PlaceholderVisionProvider(VisionProvider):
             "evidence": {
                 field: [f"PLACEHOLDER — example evidence for {field} (no vision API key configured yet)"]
                 for field in EVIDENCE_FIELDS
+            },
+            "detectedLabels": [
+                "PLACEHOLDER — Bullish Order Block (example data)",
+                "PLACEHOLDER — Bullish FVG (example data)",
+                "PLACEHOLDER — BOS (example data)",
+            ],
+            "confidenceBreakdown": {
+                field: {
+                    # Kept consistent with the three legacy flat
+                    # confidence fields above (80/75/45) for the fields
+                    # that map to one, so a real read's Phase 13
+                    # derivation logic (breakdown -> legacy fields) has
+                    # an honest placeholder equivalent to compare
+                    # against -- neutral 50 for every other field, which
+                    # has no pre-existing legacy number to match.
+                    "finalConfidence": {"orderBlockFreshness": 80, "rejectionStrength": 75, "fvgStatus": 45}.get(field, 50),
+                    "positiveFactors": [{"reason": f"PLACEHOLDER — example positive factor for {field}", "points": 20}],
+                    "negativeFactors": [{"reason": f"PLACEHOLDER — example negative factor for {field}", "points": -10}],
+                }
+                for field in CONFIDENCE_FIELDS
             },
             "provider": self.name,
             "isPlaceholder": True,
@@ -411,6 +523,90 @@ def _ensure_evidence_shape(parsed: dict[str, Any]) -> None:
     parsed["evidence"] = cleaned
 
 
+def _clean_confidence_factors(raw_factors: Any, *, force_negative: bool) -> list[dict[str, Any]]:
+    """Shared cleanup for one field's positiveFactors or negativeFactors
+    list -- every {reason, points} entry must have a non-empty string
+    reason and an int points value; ``force_negative`` flips the sign
+    of a positive-looking value that landed in negativeFactors (or vice
+    versa) rather than dropping an otherwise-valid factor over a sign
+    slip, since the model still clearly meant it to reduce/raise
+    confidence given which list it put it in."""
+    if not isinstance(raw_factors, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for item in raw_factors:
+        if not isinstance(item, dict):
+            continue
+        reason = item.get("reason")
+        points = item.get("points")
+        if not isinstance(reason, str) or not reason.strip():
+            continue
+        if isinstance(points, bool) or not isinstance(points, (int, float)):
+            continue
+        points_int = int(points)
+        if force_negative:
+            points_int = -abs(points_int)
+        else:
+            points_int = abs(points_int)
+        cleaned.append({"reason": reason.strip(), "points": points_int})
+    return cleaned[:MAX_CONFIDENCE_FACTORS_PER_FIELD]
+
+
+def _ensure_confidence_breakdown_shape(parsed: dict[str, Any]) -> None:
+    """Sprint 20 Phase 13 -- never trust the model's
+    ``confidenceBreakdown`` object blindly, same philosophy as
+    ``_ensure_evidence_shape`` above. Guarantees, after this runs:
+    ``parsed["confidenceBreakdown"]`` always has exactly the keys in
+    CONFIDENCE_FIELDS, each with an int ``finalConfidence`` (0-100,
+    clamped), and ``positiveFactors``/``negativeFactors`` lists of
+    clean ``{reason, points}`` dicts (positive/negative sign enforced
+    by which list they're in, never re-summed against finalConfidence
+    -- see this module's Phase 13 docstring note on why the model's
+    stated reasoning is displayed as-is rather than audited math).
+
+    Also derives the three Phase 9 legacy flat confidence fields
+    (_LEGACY_CONFIDENCE_FIELD_MAP) FROM this breakdown -- single source
+    of truth, so app/engines/characteristic_gap_engine.py and
+    app/engines/setup_insight_engine.py (which still read those three
+    flat fields directly) can never silently disagree with what's
+    actually shown in the UI's confidence breakdown."""
+    raw_breakdown = parsed.get("confidenceBreakdown")
+    if not isinstance(raw_breakdown, dict):
+        raw_breakdown = {}
+
+    cleaned: dict[str, dict[str, Any]] = {}
+    for field in CONFIDENCE_FIELDS:
+        entry = raw_breakdown.get(field)
+        if not isinstance(entry, dict):
+            entry = {}
+
+        final_confidence = entry.get("finalConfidence")
+        if isinstance(final_confidence, bool) or not isinstance(final_confidence, (int, float)):
+            # No usable number from the new breakdown -- fall back to
+            # this field's existing legacy flat value if the model (or
+            # an older prompt) still supplied one directly, otherwise a
+            # neutral, honestly-unremarkable default rather than a
+            # confident-looking guess.
+            legacy_field = _LEGACY_CONFIDENCE_FIELD_MAP.get(field)
+            legacy_value = parsed.get(legacy_field) if legacy_field else None
+            final_confidence = legacy_value if isinstance(legacy_value, (int, float)) and not isinstance(legacy_value, bool) else 50
+        final_confidence = max(0, min(100, int(final_confidence)))
+
+        cleaned[field] = {
+            "finalConfidence": final_confidence,
+            "positiveFactors": _clean_confidence_factors(entry.get("positiveFactors"), force_negative=False),
+            "negativeFactors": _clean_confidence_factors(entry.get("negativeFactors"), force_negative=True),
+        }
+
+    parsed["confidenceBreakdown"] = cleaned
+
+    # Derive the legacy flat fields FROM the cleaned breakdown -- always
+    # overwrite, never merely fill a gap, so there is exactly one source
+    # of truth going forward and the two can never drift apart.
+    for field, legacy_field in _LEGACY_CONFIDENCE_FIELD_MAP.items():
+        parsed[legacy_field] = cleaned[field]["finalConfidence"]
+
+
 class AnthropicVisionProvider(VisionProvider):
     """Real vision analysis via Claude. Only imports/uses the
     ``anthropic`` SDK when actually constructed (i.e. only when an API
@@ -472,6 +668,29 @@ class AnthropicVisionProvider(VisionProvider):
             "for a field if you genuinely have nothing concrete to point to "
             "(and let that honestly show up as lower confidence, rather than "
             "inventing evidence to justify a conclusion you're not sure of). "
+            "ALSO IMPORTANT -- keep FACTS separate from INTERPRETATION. "
+            "\"detectedLabels\" must contain ONLY the literal annotation text "
+            "actually visible on the chart (e.g. \"Bullish Order Block\", "
+            "\"Bullish FVG\", \"BOS\", \"CHoCH\", \"Discount\", \"Equal High\") -- "
+            "if your own indicator drew a label, it belongs here verbatim, "
+            "with zero judgment attached (never write \"mitigated\" or "
+            "\"likely filled\" in this list -- that's interpretation, which "
+            "belongs in fvgStatus/orderBlockFreshness and their evidence, "
+            "not here). Leave a label out entirely if it isn't literally on "
+            "the chart -- do not infer one belongs there. "
+            "ALSO IMPORTANT -- for \"confidenceBreakdown\", give the same "
+            "twelve fields listed under \"evidence\" a point-weighted "
+            "breakdown of WHY that specific confidence number is what it is: "
+            "positiveFactors for concrete things raising your confidence "
+            "(e.g. {\"reason\": \"BOS confirms continuation\", \"points\": 20}), "
+            "negativeFactors for concrete things lowering it (e.g. "
+            "{\"reason\": \"Counter-trend liquidity nearby\", \"points\": -10}). "
+            "Use small, honest point values (roughly 10-25 per factor) that "
+            "should roughly explain how you arrived at finalConfidence -- this "
+            "doesn't need to be exact arithmetic, but it should genuinely "
+            "reflect your reasoning, not be invented after the fact to "
+            "justify a number you already picked. Empty arrays are fine when "
+            "there's nothing specific to list either way. "
             "Respond with ONLY a JSON object with exactly these keys: "
             f"{json.dumps(VISION_ANALYSIS_SCHEMA_HINT)}. "
             "If you cannot confidently determine a field from the image, use "
@@ -494,11 +713,13 @@ class AnthropicVisionProvider(VisionProvider):
             encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
             response = await client.messages.create(
                 model=self._model,
-                # Sprint 20 Phase 12: evidence bullets for 12 fields
-                # add meaningfully to the response length -- 1024 was
-                # occasionally tight even before this, and truncation
-                # mid-JSON is exactly what breaks _extract_json_object.
-                max_tokens=2048,
+                # Sprint 20 Phase 12/13: evidence bullets AND a
+                # point-weighted confidence breakdown for 12 fields add
+                # meaningfully to the response length -- 1024 was
+                # occasionally tight even before Phase 12, and
+                # truncation mid-JSON is exactly what breaks
+                # _extract_json_object.
+                max_tokens=3072,
                 messages=[
                     {
                         "role": "user",
@@ -536,6 +757,7 @@ class AnthropicVisionProvider(VisionProvider):
         _reconcile_direction_with_order_type(parsed)
         _apply_number_sanity_check(parsed)
         _ensure_evidence_shape(parsed)
+        _ensure_confidence_breakdown_shape(parsed)
         return parsed
 
 

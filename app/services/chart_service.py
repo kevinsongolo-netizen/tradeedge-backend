@@ -51,6 +51,15 @@ _EXTRACTION_FIELDS = (
     "rejectionStrength", "rejectionStrengthConfidence",
     "fvgSize", "fvgMitigationConfidence",
     "evidence",
+    # Sprint 20 Phase 13 ("Facts vs. Interpretation vs. Confidence") --
+    # the trader's own framing: "Right now, the AI mixes together
+    # things it directly sees on the chart with things it infers."
+    # detectedLabels is the purely-factual tier (literal chart
+    # annotation text, no judgment); confidenceBreakdown extends
+    # Phase 9's honesty-confidence idea from 3 fields to all 12, each
+    # with named positive/negative point factors instead of a bare
+    # unexplained number.
+    "detectedLabels", "confidenceBreakdown",
 )
 
 

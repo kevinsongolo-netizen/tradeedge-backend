@@ -5,7 +5,9 @@ VisionProviderError on failure rather than leaking an SDK exception."""
 import pytest
 
 from app.chart.vision_provider import (
+    CONFIDENCE_FIELDS,
     EVIDENCE_FIELDS,
+    MAX_CONFIDENCE_FACTORS_PER_FIELD,
     MAX_EVIDENCE_BULLETS_PER_FIELD,
     AnthropicVisionProvider,
     CachingVisionProvider,
@@ -836,3 +838,184 @@ async def test_anthropic_provider_caps_evidence_bullets_per_field(monkeypatch):
     result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
     assert len(result["evidence"]["fvgStatus"]) == MAX_EVIDENCE_BULLETS_PER_FIELD
     assert result["evidence"]["fvgStatus"] == long_list[:MAX_EVIDENCE_BULLETS_PER_FIELD]
+
+
+@pytest.mark.asyncio
+async def test_placeholder_provider_includes_facts_and_confidence_breakdown():
+    """Phase 13 ("Facts vs. Interpretation vs. Confidence") -- the
+    trader asked to separate literal chart detections from AI
+    inference, and to see WHY each confidence number is what it is.
+    The placeholder's shape must match what a real read would produce."""
+    provider = PlaceholderVisionProvider()
+    result = await provider.analyze_screenshot(b"fake-image-bytes", "image/png")
+
+    assert isinstance(result["detectedLabels"], list)
+    assert len(result["detectedLabels"]) >= 1
+    assert all("PLACEHOLDER" in label for label in result["detectedLabels"])
+
+    assert set(result["confidenceBreakdown"].keys()) == set(CONFIDENCE_FIELDS)
+    for field in CONFIDENCE_FIELDS:
+        entry = result["confidenceBreakdown"][field]
+        assert isinstance(entry["finalConfidence"], int)
+        assert 0 <= entry["finalConfidence"] <= 100
+        assert isinstance(entry["positiveFactors"], list)
+        assert isinstance(entry["negativeFactors"], list)
+
+    # The three Phase 9 legacy flat fields must stay consistent with
+    # their Phase 13 breakdown counterparts even on the placeholder.
+    assert result["orderBlockFreshnessConfidence"] == result["confidenceBreakdown"]["orderBlockFreshness"]["finalConfidence"]
+    assert result["rejectionStrengthConfidence"] == result["confidenceBreakdown"]["rejectionStrength"]["finalConfidence"]
+    assert result["fvgMitigationConfidence"] == result["confidenceBreakdown"]["fvgStatus"]["finalConfidence"]
+
+
+def _confidence_payload(**overrides):
+    payload = {
+        "trend": "Bullish", "structure": "Bullish", "currentPriceContext": "x",
+        "liquidity": "x", "latestEvent": None, "fvgStatus": "Bullish FVG mitigated",
+        "premiumDiscount": "Discount", "bias": "BUY", "readConfidence": 80,
+        "pair": "BTCUSD", "timeframe": "M15", "orderDirection": "BUY",
+        "orderType": "Buy Limit", "entry": 63984.27, "stopLoss": 63500.0,
+        "takeProfit": 65000.0, "riskReward": 2.0, "lots": 0.01,
+        "poiType": "Bullish Order Block",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_passes_through_valid_confidence_breakdown(monkeypatch):
+    """Happy path: positive/negative factors flow through untouched,
+    and the derived legacy flat field matches finalConfidence exactly
+    (single source of truth, never independently guessed twice)."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = _confidence_payload(confidenceBreakdown={
+        "trend": {
+            "finalConfidence": 90,
+            "positiveFactors": [
+                {"reason": "BOS confirms continuation", "points": 20},
+                {"reason": "Higher highs", "points": 20},
+            ],
+            "negativeFactors": [{"reason": "Counter-trend liquidity nearby", "points": -10}],
+        },
+        "orderBlockFreshness": {"finalConfidence": 65, "positiveFactors": [], "negativeFactors": []},
+    })
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+
+    trend_entry = result["confidenceBreakdown"]["trend"]
+    assert trend_entry["finalConfidence"] == 90
+    assert trend_entry["positiveFactors"] == [
+        {"reason": "BOS confirms continuation", "points": 20},
+        {"reason": "Higher highs", "points": 20},
+    ]
+    assert trend_entry["negativeFactors"] == [{"reason": "Counter-trend liquidity nearby", "points": -10}]
+    assert result["confidenceBreakdown"]["orderBlockFreshness"]["finalConfidence"] == 65
+    assert result["orderBlockFreshnessConfidence"] == 65
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_defaults_missing_confidence_breakdown_entirely(monkeypatch):
+    """The model can omit "confidenceBreakdown" altogether -- every
+    field must still get a neutral, honest default rather than a
+    missing key or a fabricated confident-looking number."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = _confidence_payload()  # no confidenceBreakdown key at all
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert set(result["confidenceBreakdown"].keys()) == set(CONFIDENCE_FIELDS)
+    for field in CONFIDENCE_FIELDS:
+        assert result["confidenceBreakdown"][field]["finalConfidence"] == 50
+        assert result["confidenceBreakdown"][field]["positiveFactors"] == []
+        assert result["confidenceBreakdown"][field]["negativeFactors"] == []
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_clamps_out_of_range_confidence(monkeypatch):
+    """A vision model returning 130 or -20 for a confidence number
+    should be clamped to the valid 0-100 range, never passed through
+    as-is or silently dropped."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    payload = _confidence_payload(confidenceBreakdown={
+        "trend": {"finalConfidence": 130, "positiveFactors": [], "negativeFactors": []},
+        "structure": {"finalConfidence": -20, "positiveFactors": [], "negativeFactors": []},
+    })
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    assert result["confidenceBreakdown"]["trend"]["finalConfidence"] == 100
+    assert result["confidenceBreakdown"]["structure"]["finalConfidence"] == 0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_enforces_factor_sign_and_caps_count(monkeypatch):
+    """A positive number that lands in negativeFactors (or vice versa)
+    gets its sign corrected rather than being dropped -- the model
+    still clearly meant it to reduce/raise confidence given which list
+    it chose. Also verifies the per-field factor-count cap."""
+    provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
+    many_factors = [{"reason": f"factor {i}", "points": 5} for i in range(10)]
+    payload = _confidence_payload(confidenceBreakdown={
+        "trend": {
+            "finalConfidence": 70,
+            "positiveFactors": [{"reason": "Mis-signed negative", "points": -15}] + many_factors,
+            "negativeFactors": [{"reason": "Mis-signed positive", "points": 15}],
+        },
+    })
+    import json as _json
+
+    class _FakeAsyncAnthropic:
+        def __init__(self, api_key):
+            pass
+
+        class messages:
+            @staticmethod
+            async def create(**kwargs):
+                return _fake_response_with_text(_json.dumps(payload))
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAsyncAnthropic)
+    result = await provider.analyze_screenshot(b"fake-bytes", "image/png")
+    positive = result["confidenceBreakdown"]["trend"]["positiveFactors"]
+    negative = result["confidenceBreakdown"]["trend"]["negativeFactors"]
+    assert positive[0] == {"reason": "Mis-signed negative", "points": 15}
+    assert len(positive) == MAX_CONFIDENCE_FACTORS_PER_FIELD
+    assert negative == [{"reason": "Mis-signed positive", "points": -15}]

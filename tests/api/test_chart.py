@@ -121,6 +121,32 @@ def test_full_analysis_image_extraction_includes_evidence_for_every_conclusion(c
     assert extraction["fvgSize"] == "Medium"
 
 
+def test_full_analysis_image_extraction_separates_facts_from_confidence(client):
+    """Sprint 20 Phase 13 ("Facts vs. Interpretation vs. Confidence")
+    -- the trader asked to see literal chart detections separately from
+    AI inference, and a point-weighted breakdown of why each conclusion
+    has the confidence it does. Confirms both new tiers reach the real
+    /full-analysis/image response, and that the legacy Phase 9 flat
+    confidence fields stay consistent with their Phase 13 counterparts."""
+    files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
+    resp = client.post("/api/v1/chart/full-analysis/image", files=files)
+    assert resp.status_code == 200, resp.text
+    extraction = resp.json()["extraction"]
+
+    assert isinstance(extraction["detectedLabels"], list)
+    assert len(extraction["detectedLabels"]) >= 1
+
+    breakdown = extraction["confidenceBreakdown"]
+    assert "trend" in breakdown
+    assert 0 <= breakdown["trend"]["finalConfidence"] <= 100
+    assert "positiveFactors" in breakdown["trend"]
+    assert "negativeFactors" in breakdown["trend"]
+
+    assert breakdown["orderBlockFreshness"]["finalConfidence"] == extraction["orderBlockFreshnessConfidence"]
+    assert breakdown["rejectionStrength"]["finalConfidence"] == extraction["rejectionStrengthConfidence"]
+    assert breakdown["fvgStatus"]["finalConfidence"] == extraction["fvgMitigationConfidence"]
+
+
 def test_full_analysis_image_reports_thin_history_honestly(client):
     files = {"file": ("chart.png", io.BytesIO(_TINY_PNG), "image/png")}
     resp = client.post("/api/v1/chart/full-analysis/image", files=files)

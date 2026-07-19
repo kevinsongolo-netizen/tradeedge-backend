@@ -246,6 +246,32 @@ class CoachRequest(CamelModel):
 # on top of them.
 
 
+class ConfidenceFactor(CamelModel):
+    """One line-item in a per-field confidence breakdown -- e.g. "BOS
+    confirms continuation (+20)" or "Counter-trend liquidity nearby
+    (-10)". Mirrors the same point-weighted-row idea
+    ``SimilarityBreakdownRow`` above already uses for "why is this
+    trade X% similar", applied here (Sprint 20 Phase 13) to "why is
+    this conclusion X% confident"."""
+
+    reason: str
+    points: int
+
+
+class ConfidenceBreakdown(CamelModel):
+    """Sprint 20 Phase 13 ("Facts vs. Interpretation vs. Confidence")
+    -- the trader's own framing: "For every interpretation, show why
+    the confidence is what it is." One of these per interpretive field
+    in ``SetupExtraction.confidence_breakdown`` -- see
+    ``app.chart.vision_provider.CONFIDENCE_FIELDS`` for the exact key
+    set and ``_ensure_confidence_breakdown_shape`` for the shape
+    guarantee (always present, points always signed correctly)."""
+
+    final_confidence: int
+    positive_factors: list[ConfidenceFactor] = Field(default_factory=list)
+    negative_factors: list[ConfidenceFactor] = Field(default_factory=list)
+
+
 class SetupExtraction(CamelModel):
     """What the vision model read directly off the screenshot -- the
     trader's own pending order/position and the chart's own structure
@@ -297,6 +323,16 @@ class SetupExtraction(CamelModel):
     # and _ensure_evidence_shape for the guarantee that every key is
     # always present with a (possibly empty) list of strings.
     evidence: dict[str, list[str]] = Field(default_factory=dict)
+    # Sprint 20 Phase 13 -- the FACTS tier: literal chart annotation
+    # labels with zero interpretation attached (what the labels MEAN
+    # stays in the interpretive fields/evidence above). See this
+    # module's Phase 13 docstring note in app.chart.vision_provider.
+    detected_labels: list[str] = Field(default_factory=list)
+    # Sprint 20 Phase 13 -- the CONFIDENCE tier: extends Phase 9's
+    # honesty-confidence idea from 3 fields to all 12 interpretive
+    # fields, each with named positive/negative point factors instead
+    # of a bare unexplained number.
+    confidence_breakdown: dict[str, ConfidenceBreakdown] = Field(default_factory=dict)
 
 
 class SimilarityBreakdownRow(CamelModel):
