@@ -197,7 +197,7 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     # concrete visual evidence bullets here -- see EVIDENCE_FIELDS and
     # this module's Phase 12 docstring note below for the full
     # rationale and the exact set of fields covered.
-    "evidence": {field: "array of short strings -- concrete visual evidence for this specific conclusion, e.g. 'Price closed back inside the gap on the last two candles' -- empty array if there is genuinely nothing to point to" for field in ["trend", "structure", "bias", "currentPriceContext", "liquidity", "latestEvent", "fvgStatus", "premiumDiscount", "poiType", "orderBlockFreshness", "rejectionStrength", "fvgSize"]},
+    "evidence": {field: "array of 1-4 short evidence strings, or [] (see instructions above)" for field in ["orderBlockFreshness", "rejectionStrength", "fvgStatus"]},
     # --- Sprint 20 Phase 13 ("Facts vs. Interpretation vs. Confidence")
     # -- the trader's own framing: "Right now, the AI mixes together
     # things it directly sees on the chart with things it infers." This
@@ -223,11 +223,11 @@ VISION_ANALYSIS_SCHEMA_HINT = {
     # against named reasons instead of an unexplained number.
     "confidenceBreakdown": {
         field: {
-            "finalConfidence": "0-100 int -- your honest overall confidence in this specific conclusion",
-            "positiveFactors": "array of {reason: short string, points: positive int} -- concrete things that INCREASE your confidence, e.g. {'reason': 'BOS confirms continuation', 'points': 20}",
-            "negativeFactors": "array of {reason: short string, points: negative int} -- concrete things that DECREASE your confidence, e.g. {'reason': 'Counter-trend liquidity nearby', 'points': -10}. Empty array if nothing reduces your confidence.",
+            "finalConfidence": "0-100 int",
+            "positiveFactors": "array of {reason, points>0} (see instructions above)",
+            "negativeFactors": "array of {reason, points<0}, [] ok (see instructions above)",
         }
-        for field in ["trend", "structure", "bias", "currentPriceContext", "liquidity", "latestEvent", "fvgStatus", "premiumDiscount", "poiType", "orderBlockFreshness", "rejectionStrength", "fvgSize"]
+        for field in ["orderBlockFreshness", "rejectionStrength", "fvgStatus"]
     },
 }
 
@@ -241,9 +241,17 @@ VISION_ANALYSIS_SCHEMA_HINT = {
 # separate "reasoning" to show -- the transcribed value already IS the
 # evidence).
 EVIDENCE_FIELDS: tuple[str, ...] = (
-    "trend", "structure", "bias", "currentPriceContext", "liquidity",
-    "latestEvent", "fvgStatus", "premiumDiscount", "poiType",
-    "orderBlockFreshness", "rejectionStrength", "fvgSize",
+    # Sprint 22 cost-optimization: scoped back down from all 12
+    # interpretive fields to just the 3 genuine judgment calls a
+    # static screenshot can't fully prove (order block freshness,
+    # rejection strength, FVG mitigation) -- the trader's own call
+    # after reviewing real usage: trend/structure/bias/etc. are
+    # usually clear reads that don't need a full evidence+confidence
+    # justification, and asking for one on all 12 fields was the
+    # single largest driver of output-token cost per screenshot.
+    # These 3 exactly match the original Phase 9 scope before Phase
+    # 12/13 expanded it to all 12 -- matches _LEGACY_CONFIDENCE_FIELD_MAP.
+    "orderBlockFreshness", "rejectionStrength", "fvgStatus",
 )
 
 # Never let one field's evidence list balloon into an essay -- a
@@ -667,10 +675,9 @@ class AnthropicVisionProvider(VisionProvider):
             "realistic lower confidence (30-60) rather than defaulting to a "
             "confident-sounding label you can't actually back up. "
             "ALSO IMPORTANT -- never state an interpretation without backing "
-            "it up. For every field listed in \"evidence\" below (trend, "
-            "structure, bias, currentPriceContext, liquidity, latestEvent, "
-            "fvgStatus, premiumDiscount, poiType, orderBlockFreshness, "
-            "rejectionStrength, fvgSize), list the SPECIFIC, concrete visual "
+            "it up. For each of the three fields listed in \"evidence\" below "
+            "(orderBlockFreshness, rejectionStrength, fvgStatus), list the "
+            "SPECIFIC, concrete visual "
             "evidence from THIS screenshot that led you to that conclusion -- "
             "e.g. 'Price closed back inside the gap on the last two candles' "
             "or 'Long lower wick rejecting the order block zone', not vague "
@@ -690,7 +697,7 @@ class AnthropicVisionProvider(VisionProvider):
             "not here). Leave a label out entirely if it isn't literally on "
             "the chart -- do not infer one belongs there. "
             "ALSO IMPORTANT -- for \"confidenceBreakdown\", give the same "
-            "twelve fields listed under \"evidence\" a point-weighted "
+            "three fields listed under \"evidence\" a point-weighted "
             "breakdown of WHY that specific confidence number is what it is: "
             "positiveFactors for concrete things raising your confidence "
             "(e.g. {\"reason\": \"BOS confirms continuation\", \"points\": 20}), "
