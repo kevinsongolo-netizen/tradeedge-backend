@@ -9,7 +9,7 @@ import base64
 from datetime import date as date_
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -211,5 +211,16 @@ class TradeRepository:
         return row.isoformat() if row else None
 
     async def count(self, user_id: int) -> int:
-        trades = await self.list_all(user_id)
-        return len(trades)
+        """Row count only -- a plain ``SELECT COUNT(*)``, not
+        ``len(await self.list_all(user_id))``. That used to hydrate every
+        column of every trade (including the big JSON blobs -- screenshots,
+        vision_fingerprint, m15_confirmations) just to throw the rows away
+        and keep the count. Found during the Sprint 22 stability audit:
+        this runs on EVERY stats/coach dashboard load as part of the cache
+        fingerprint (see StatsService._fingerprint), including on a cache
+        *hit* -- so it was doing a full-row scan before ever checking
+        whether the cache could just answer instantly."""
+        result = await self.session.execute(
+            select(func.count()).select_from(Trade).where(Trade.user_id == user_id)
+        )
+        return int(result.scalar_one())

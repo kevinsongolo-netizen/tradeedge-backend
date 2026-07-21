@@ -5,7 +5,9 @@ rather than fixed fields, mirroring the JS engines' object shape.
 """
 from __future__ import annotations
 
-from pydantic import Field
+import math
+
+from pydantic import Field, field_validator
 
 from app.schemas.common import CamelModel
 
@@ -22,7 +24,18 @@ class GroupStats(CamelModel):
     loss_rate: float
     breakeven_rate: float
     total_pnl: float
-    profit_factor: float
+    # Sprint 22 stability audit -- statistics_core() (intentionally, per
+    # its own test suite) returns math.inf here for a slice with wins but
+    # zero losses, e.g. any pair/session/day a trader has only won on so
+    # far. That's correct engine behavior, but math.inf serializes to the
+    # bare token `Infinity` in the JSON response body -- not valid JSON,
+    # so a browser's response.json()/JSON.parse() throws and the ENTIRE
+    # stats payload fails to load, not just this one field. The validator
+    # below converts inf/-inf/nan to null right at the API boundary,
+    # leaving the pure engine (and its test asserting math.isinf(...))
+    # untouched. null here means "no losing trades yet in this slice" --
+    # display it as an unbounded/"∞" profit factor, never as 0.
+    profit_factor: float | None = None
     expectancy: float
     average_win: float
     average_loss: float
@@ -40,6 +53,19 @@ class GroupStats(CamelModel):
     consecutive_losses: int
     current_winning_streak: int
     current_losing_streak: int
+
+    @field_validator("profit_factor", mode="before")
+    @classmethod
+    def _finite_or_none(cls, value):
+        """See the profit_factor field comment above -- never let a
+        non-finite float (inf/-inf/nan) reach JSON serialization."""
+        if value is None:
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return value
+        return None if not math.isfinite(value) else value
 
 
 class StatisticsResult(GroupStats):

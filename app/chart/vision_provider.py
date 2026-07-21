@@ -615,6 +615,17 @@ class AnthropicVisionProvider(VisionProvider):
 
     name = "anthropic"
 
+    #: Sprint 22 stability audit -- the Anthropic SDK's own default
+    #: timeout is 10 minutes. That's fine for a batch job but not for a
+    #: synchronous request a trader is sitting in front of (Pre-Trade
+    #: Check / Chart Analysis Engine) -- a slow or hung upstream call
+    #: would tie up the request for up to 10 minutes with zero feedback.
+    #: The other two external calls this app makes (news calendar,
+    #: Cloudinary image upload) both already set an explicit, much
+    #: shorter timeout; this brings vision analysis in line with that
+    #: same pattern instead of being the one inconsistent exception.
+    _REQUEST_TIMEOUT_SECONDS = 45.0
+
     def __init__(self, api_key: str, model: str = "claude-sonnet-4-5") -> None:
         self._api_key = api_key
         self._model = model
@@ -709,7 +720,7 @@ class AnthropicVisionProvider(VisionProvider):
 
         text = ""
         try:
-            client = anthropic.AsyncAnthropic(api_key=self._api_key)
+            client = anthropic.AsyncAnthropic(api_key=self._api_key, timeout=self._REQUEST_TIMEOUT_SECONDS)
             encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
             response = await client.messages.create(
                 model=self._model,

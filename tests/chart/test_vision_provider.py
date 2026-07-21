@@ -154,7 +154,7 @@ async def test_anthropic_provider_wraps_api_failure_as_vision_error(monkeypatch)
     provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -199,7 +199,7 @@ async def test_anthropic_provider_parses_plain_json_response(monkeypatch):
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -230,7 +230,7 @@ async def test_anthropic_provider_recovers_json_wrapped_in_markdown_fence(monkey
              '"lots": 0.06, "poiType": "Bearish Order Block"}\n```'
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -262,7 +262,7 @@ async def test_anthropic_provider_recovers_json_with_stray_surrounding_text(monk
     )
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -282,7 +282,7 @@ async def test_anthropic_provider_raises_clean_error_on_genuinely_unparseable_re
     provider = AnthropicVisionProvider(api_key="sk-test-fake-key-not-real")
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -326,7 +326,7 @@ async def test_anthropic_provider_flags_sell_stop_loss_below_entry(monkeypatch):
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -360,7 +360,7 @@ async def test_anthropic_provider_recomputes_risk_reward_deterministically(monke
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -393,7 +393,7 @@ async def test_anthropic_provider_no_warning_when_sl_tp_missing(monkeypatch):
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -433,7 +433,7 @@ async def test_buy_limit_order_type_overrides_a_misread_sell_direction(monkeypat
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -470,7 +470,7 @@ async def test_sell_stop_order_type_overrides_a_misread_buy_direction(monkeypatc
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -504,7 +504,7 @@ async def test_ambiguous_order_type_leaves_direction_untouched(monkeypatch):
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -545,7 +545,7 @@ async def test_caching_vision_provider_reuses_result_for_identical_bytes(monkeyp
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -587,7 +587,7 @@ async def test_caching_vision_provider_calls_inner_again_for_different_bytes(mon
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -626,7 +626,7 @@ async def test_caching_vision_provider_expires_after_ttl(monkeypatch):
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -667,7 +667,7 @@ async def test_caching_vision_provider_returns_a_copy_not_a_shared_reference(mon
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -732,7 +732,7 @@ async def test_anthropic_provider_passes_through_valid_evidence_bullets(monkeypa
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -765,7 +765,7 @@ async def test_anthropic_provider_defaults_missing_evidence_key_entirely(monkeyp
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -796,7 +796,7 @@ async def test_anthropic_provider_coerces_malformed_evidence_shapes(monkeypatch)
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -824,7 +824,7 @@ async def test_anthropic_provider_caps_evidence_bullets_per_field(monkeypatch):
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -902,7 +902,7 @@ async def test_anthropic_provider_passes_through_valid_confidence_breakdown(monk
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -936,7 +936,7 @@ async def test_anthropic_provider_defaults_missing_confidence_breakdown_entirely
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -968,7 +968,7 @@ async def test_anthropic_provider_clamps_out_of_range_confidence(monkeypatch):
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:
@@ -1002,7 +1002,7 @@ async def test_anthropic_provider_enforces_factor_sign_and_caps_count(monkeypatc
     import json as _json
 
     class _FakeAsyncAnthropic:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             pass
 
         class messages:

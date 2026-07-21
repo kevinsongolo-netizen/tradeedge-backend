@@ -68,6 +68,22 @@ async def test_trade_repo_list_all_ordered_by_date():
         assert [r.id for r in rows] == ["a", "b"]
 
 
+async def test_trade_repo_count_matches_row_count_without_full_hydration():
+    """Sprint 22 stability audit -- count() used to be len(await
+    list_all(user_id)), hydrating every column (including the big JSON
+    blobs) of every row just to throw them away and keep the length.
+    Now a plain SELECT COUNT(*); this just confirms the number itself
+    is still correct (0 with no trades, then matching the real count
+    after inserts) under the new implementation."""
+    async with await _session() as session:
+        repo = TradeRepository(session)
+        assert await repo.count(1) == 0
+        await repo.upsert(1, "c1", {"pair": "EURUSD"})
+        await repo.upsert(1, "c2", {"pair": "GBPUSD"})
+        await session.commit()
+        assert await repo.count(1) == 2
+
+
 async def test_trade_repo_delete():
     async with await _session() as session:
         repo = TradeRepository(session)
