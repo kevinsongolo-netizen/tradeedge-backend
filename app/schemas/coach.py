@@ -32,7 +32,18 @@ class DimensionStat(CamelModel):
     expectancy: float
     total_pnl: float
     average_rr: float | None = None
+    # None (not 0, not Infinity) whenever this group has no losing
+    # trade yet -- see setup_engine.group_stats()'s comment. Sprint 22
+    # follow-up: added so "Consider dropping" advice can show *why*
+    # (win rate + net P&L already existed; profit factor did not).
+    profit_factor: float | None = None
     confident: bool
+    # Sprint 22 follow-up -- only populated for pairToStopTrading (the
+    # session where this specific pair lost the most, computed from raw
+    # entries in coach_deep_dive_engine._worst_session_for_entries).
+    # None for every other DimensionStat use (best_setup, worst_setup,
+    # etc.), where a per-pair session breakdown isn't meaningful.
+    worst_session: str | None = None
 
 
 class MistakeSummary(CamelModel):

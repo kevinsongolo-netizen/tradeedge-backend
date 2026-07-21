@@ -57,14 +57,28 @@ def group_stats(entries: list[dict] | None, key_fn: Callable[[dict], str | None]
         if not key:
             continue
         g = groups.setdefault(
-            key, {"key": key, "count": 0, "wins": 0, "losses": 0, "breakeven": 0, "totalPnl": 0.0, "totalRR": 0.0, "rrCount": 0}
+            key,
+            {
+                "key": key,
+                "count": 0,
+                "wins": 0,
+                "losses": 0,
+                "breakeven": 0,
+                "totalPnl": 0.0,
+                "totalRR": 0.0,
+                "rrCount": 0,
+                "grossProfit": 0.0,
+                "grossLoss": 0.0,
+            },
         )
         g["count"] += 1
         pnl = e.get("pnl") or 0
         if pnl > 0:
             g["wins"] += 1
+            g["grossProfit"] += float(pnl)
         elif pnl < 0:
             g["losses"] += 1
+            g["grossLoss"] += abs(float(pnl))
         else:
             g["breakeven"] += 1
         g["totalPnl"] += float(pnl or 0)
@@ -78,12 +92,20 @@ def group_stats(entries: list[dict] | None, key_fn: Callable[[dict], str | None]
         win_rate = (g["wins"] / g["count"] * 100) if g["count"] else 0.0
         expectancy = (g["totalPnl"] / g["count"]) if g["count"] else 0.0
         sample_weight = min(1.0, g["count"] / SETUP_MIN_SAMPLE)
+        # profitFactor: None (not 0, not Infinity) whenever there's no
+        # losing trade yet in this group -- same JSON-safety fix applied
+        # to statistics_engine.py during the Sprint 22 audit (a literal
+        # Infinity token isn't valid JSON and breaks response parsing in
+        # a browser). None here reads as "no losses recorded yet",
+        # distinct from a real (low) ratio.
+        profit_factor = (g["grossProfit"] / g["grossLoss"]) if g["grossLoss"] > 0 else None
         result.append(
             {
                 **g,
                 "winRate": win_rate,
                 "expectancy": expectancy,
                 "averageRR": (g["totalRR"] / g["rrCount"]) if g["rrCount"] else None,
+                "profitFactor": profit_factor,
                 "confident": g["count"] >= SETUP_MIN_SAMPLE,
                 "rankScore": (win_rate * 0.65 + max(-100.0, min(100.0, expectancy)) * 0.35) * sample_weight,
             }

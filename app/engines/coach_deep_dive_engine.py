@@ -23,6 +23,27 @@ COACH_DEEP_DIVE_VERSION = "8.0"
 MIN_SAMPLE_FOR_WARNING = 3
 
 
+def _worst_session_for_pair(entries: list[dict[str, Any]], pair: str) -> str | None:
+    """Which session a specific pair has lost the most in -- the
+    supporting evidence a "Consider dropping" recommendation needs
+    (Sprint 22 follow-up: the trader asked for a reason, not just a
+    pair name). Counts LOSING trades per session for this pair only;
+    None if none of this pair's losses have a session recorded."""
+    session_losses: dict[str, int] = {}
+    for e in entries:
+        if e.get("pair") != pair:
+            continue
+        if (e.get("pnl") or 0) >= 0:
+            continue
+        session = e.get("session")
+        if not session:
+            continue
+        session_losses[session] = session_losses.get(session, 0) + 1
+    if not session_losses:
+        return None
+    return max(session_losses.items(), key=lambda kv: kv[1])[0]
+
+
 def _worst_confident_row(rows: list[dict[str, Any]] | None) -> dict[str, Any] | None:
     """The lowest-ranked row that still has enough samples to trust —
     ``setup_engine.group_stats()`` already sorts best-first, so this is
@@ -69,11 +90,23 @@ def _why_winning(mistakes: dict[str, Any], best_setup_row: dict[str, Any] | None
     return " ".join(parts) if parts else "Not enough data yet to identify a clear pattern in your wins."
 
 
-def build_deep_dive(statistics: dict[str, Any], mistakes: dict[str, Any], setups: dict[str, Any], health: dict[str, Any]) -> dict[str, Any]:
-    """build_deep_dive(statistics, mistakes, setups, health) — Phase 6's
-    structured Q&A. All four arguments are the outputs of Sprint 6's
-    ``compute_statistics``/``analyze_mistakes``/``analyze_setups``/
-    ``compute_strategy_health`` for the same trade history."""
+def build_deep_dive(
+    statistics: dict[str, Any],
+    mistakes: dict[str, Any],
+    setups: dict[str, Any],
+    health: dict[str, Any],
+    entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """build_deep_dive(statistics, mistakes, setups, health, entries) —
+    Phase 6's structured Q&A. The first four arguments are the outputs
+    of Sprint 6's ``compute_statistics``/``analyze_mistakes``/
+    ``analyze_setups``/``compute_strategy_health`` for the same trade
+    history. ``entries`` (Sprint 22 follow-up, optional/defaulted for
+    backward compatibility) is the same raw journal history those were
+    all computed from -- needed to look up which session a
+    to-stop-trading pair lost the most in, since that's a per-pair
+    breakdown group_stats() doesn't produce on its own."""
+    entries = entries or []
     by_dimension = setups.get("byDimension", {})
     top = setups.get("top", {})
 
@@ -91,6 +124,11 @@ def build_deep_dive(statistics: dict[str, Any], mistakes: dict[str, Any], setups
         if worst_pair_row and worst_pair_row["expectancy"] < 0 and worst_pair_row["count"] >= MIN_SAMPLE_FOR_WARNING
         else None
     )
+    if pair_to_stop_trading is not None:
+        pair_to_stop_trading = {
+            **pair_to_stop_trading,
+            "worstSession": _worst_session_for_pair(entries, pair_to_stop_trading["key"]),
+        }
 
     return {
         "whyLosing": _why_losing(mistakes, weakest_health),

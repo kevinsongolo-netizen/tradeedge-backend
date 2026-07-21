@@ -30,3 +30,22 @@ def test_empty_entries_return_empty_dimensions():
     result = analyze_setups([])
     assert result["sampleSize"] == 0
     assert result["bestSetup"] is None
+
+
+def test_group_stats_profit_factor():
+    entries = [
+        {"pair": "EURUSD", "pnl": 100},
+        {"pair": "EURUSD", "pnl": 100},
+        {"pair": "EURUSD", "pnl": -50},
+    ]
+    groups = group_stats(entries, lambda e: e["pair"])
+    assert groups[0]["profitFactor"] == 200 / 50
+
+
+def test_group_stats_profit_factor_is_none_without_losses():
+    """Sprint 22 follow-up -- None (not 0, not Infinity) whenever a
+    group has no losing trade yet, same JSON-safety convention as
+    statistics_engine's profitFactor fix."""
+    entries = [{"pair": "EURUSD", "pnl": 100}]
+    groups = group_stats(entries, lambda e: e["pair"])
+    assert groups[0]["profitFactor"] is None

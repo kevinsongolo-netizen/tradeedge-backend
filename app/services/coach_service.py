@@ -154,6 +154,6 @@ class CoachService:
             setups = analyze_setups(entries)
             mistakes = analyze_mistakes(entries)
             health = compute_strategy_health(entries)
-            return build_deep_dive(statistics, mistakes, setups, health)
+            return build_deep_dive(statistics, mistakes, setups, health, entries=entries)
 
         return await coach_cache.get_or_set(("deep_dive", user_id), compute)

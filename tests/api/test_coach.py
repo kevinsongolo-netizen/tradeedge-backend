@@ -101,6 +101,15 @@ def test_coach_deep_dive_with_data_flags_losing_pair_and_best_setup(client):
     assert body["biggestMistake"]["name"] == "FOMO"
     assert body["version"] == "8.0"
 
+    # User-requested improvement: "Consider dropping: XAUUSD" needs
+    # evidence, not just a name. Win rate/net P&L already existed on
+    # the row (winRate/totalPnl); profitFactor and worstSession are new.
+    pts = body["pairToStopTrading"]
+    assert pts["profitFactor"] == 80.0 / (40.0 * 5)  # gross profit / gross loss
+    assert pts["worstSession"] == "Asian"  # every XAUUSD trade in the fixture is Asian session
+    assert "Infinity" not in resp.text
+    assert "NaN" not in resp.text
+
 
 def test_coach_deep_dive_is_a_valid_shape_for_dimension_stats(client):
     _seed_deep_dive_trades(client)
@@ -109,7 +118,10 @@ def test_coach_deep_dive_is_a_valid_shape_for_dimension_stats(client):
     for field in ("bestSetup", "worstSetup", "worstDayToTrade", "bestSession", "pairToStopTrading"):
         row = body[field]
         if row is not None:
-            for key in ("key", "count", "wins", "losses", "breakeven", "winRate", "expectancy", "totalPnl", "confident"):
+            for key in (
+                "key", "count", "wins", "losses", "breakeven", "winRate", "expectancy", "totalPnl",
+                "profitFactor", "confident", "worstSession",
+            ):
                 assert key in row, f"{field} missing {key}"
 
 

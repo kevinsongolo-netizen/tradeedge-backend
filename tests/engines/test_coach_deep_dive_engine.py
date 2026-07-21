@@ -12,6 +12,7 @@ from app.engines.coach_deep_dive_engine import (
     _why_losing,
     _why_winning,
     _worst_confident_row,
+    _worst_session_for_pair,
     build_deep_dive,
 )
 
@@ -157,3 +158,49 @@ def test_build_deep_dive_handles_empty_history_gracefully():
     assert result["bestSession"] is None
     assert result["pairToStopTrading"] is None
     assert result["sampleSize"] == 0
+
+
+# --- _worst_session_for_pair (Sprint 22 follow-up) ------------------------------------------------------
+
+def test_worst_session_for_pair_picks_session_with_most_losses():
+    entries = [
+        {"pair": "BTCUSD", "session": "London", "pnl": -10},
+        {"pair": "BTCUSD", "session": "London", "pnl": -20},
+        {"pair": "BTCUSD", "session": "New York", "pnl": -5},
+        {"pair": "BTCUSD", "session": "New York", "pnl": 50},  # a win, doesn't count
+        {"pair": "EURUSD", "session": "Asian", "pnl": -100},  # different pair, ignored
+    ]
+    assert _worst_session_for_pair(entries, "BTCUSD") == "London"
+
+
+def test_worst_session_for_pair_none_when_no_losses():
+    entries = [{"pair": "BTCUSD", "session": "London", "pnl": 40}]
+    assert _worst_session_for_pair(entries, "BTCUSD") is None
+
+
+def test_build_deep_dive_attaches_evidence_to_pair_to_stop_trading():
+    """User-requested improvement: "Consider dropping: BTCUSD" alone
+    isn't enough to decide on -- win rate and net P&L already came
+    through the existing row (winRate/totalPnl), profitFactor now comes
+    through group_stats() itself, and worstSession is computed here
+    from the raw entries actually passed in."""
+    setups = _full_setups()
+    raw_entries = [
+        {"pair": "XAUUSD", "session": "London", "pnl": -50},
+        {"pair": "XAUUSD", "session": "London", "pnl": -30},
+        {"pair": "XAUUSD", "session": "Asian", "pnl": -5},
+        {"pair": "EURUSD", "session": "New York", "pnl": 100},
+    ]
+    result = build_deep_dive(
+        statistics={}, mistakes=_full_mistakes(), setups=setups, health=_full_health(), entries=raw_entries
+    )
+    assert result["pairToStopTrading"]["key"] == "XAUUSD"
+    assert result["pairToStopTrading"]["worstSession"] == "London"
+
+
+def test_build_deep_dive_without_entries_still_works():
+    """Backward compatible -- entries defaults to None/[] so existing
+    callers that never pass it don't break; worstSession just stays
+    None."""
+    result = build_deep_dive(statistics={}, mistakes=_full_mistakes(), setups=_full_setups(), health=_full_health())
+    assert result["pairToStopTrading"]["worstSession"] is None

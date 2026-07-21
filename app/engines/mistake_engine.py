@@ -37,10 +37,24 @@ def _top_count(groups: dict[str, dict]) -> dict | None:
 
 
 def _top_loss(groups: dict[str, dict]) -> dict | None:
-    if not groups:
+    """The single worst-losing group by net P&L -- but only among
+    groups that have ACTUALLY lost money (net pnl < 0).
+
+    Bug found via user report (Sprint 22 follow-up): with the old
+    ``min(groups.items(), ...)``, a group with only one breakeven or
+    winning trade still "won" the min() comparison whenever it was the
+    only group present (or tied at 0), producing the nonsensical
+    "X has cost $0.00 across 1 trade" / "linked to $0.00 in losses" --
+    a habit/mistake tag that hasn't actually cost anything shouldn't be
+    reported as the most harmful/expensive one. Returning None here
+    lets both call sites (mostExpensiveMistake, mostHarmfulHabit) fall
+    back to their existing "not enough data yet" honesty pattern
+    instead of fabricating a hollow headline."""
+    losing = {name: data for name, data in groups.items() if data["pnl"] < 0}
+    if not losing:
         return None
-    name, data = min(groups.items(), key=lambda kv: kv[1]["pnl"])
-    return {"name": name, **data, "totalLoss": abs(min(0.0, data["pnl"]))}
+    name, data = min(losing.items(), key=lambda kv: kv[1]["pnl"])
+    return {"name": name, **data, "totalLoss": abs(data["pnl"])}
 
 
 def _habit_groups(entries: list[dict], tag_key: str) -> dict[str, dict]:
